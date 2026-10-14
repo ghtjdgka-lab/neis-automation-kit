@@ -49,6 +49,28 @@ if (-not $py -and (Get-Command winget -ErrorAction SilentlyContinue)) {
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
     $py = Find-Python
 }
+# winget 이 없거나 고장인 PC — python.org 공식 설치 파일을 직접 받아 깐다
+#   새로 만든 윈도우 계정은 winget 목록이 비어 «필요한 데이터가 없습니다» 로 두 번 다 실패했다 (2026-10-14 실측)
+if (-not $py) {
+    Write-Host "  winget 으로 못 깔아서 python.org 공식 설치 파일로 깝니다 (약 30MB · 1~3분)..." -ForegroundColor Yellow
+    $ErrorActionPreference = "Continue"
+    $inst = Join-Path $env:TEMP "python-3.13.16-amd64.exe"
+    try {
+        Invoke-WebRequest "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe" -OutFile $inst -UseBasicParsing
+        $sig = Get-AuthenticodeSignature $inst
+        if ($sig.Status -eq "Valid" -and $sig.SignerCertificate.Subject -match "Python Software Foundation") {
+            Start-Process $inst -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_launcher=0" -Wait
+            $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+            $py = Find-Python
+        } else {
+            Write-Host "  ! 받은 파일의 서명이 Python Software Foundation 이 아니라서 설치하지 않았습니다." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  ! python.org 에서 받지 못했습니다: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    Remove-Item $inst -ErrorAction SilentlyContinue
+    $ErrorActionPreference = "Stop"
+}
 if (-not $py) {
     Write-Host ""
     Write-Host "  X 파이썬을 자동으로 깔지 못했습니다." -ForegroundColor Red
@@ -88,7 +110,12 @@ Write-Host "  OK" -ForegroundColor Green
 
 # 4) Playwright
 Write-Host "[4/4] 브라우저 제어 도구 설치 중..."
-& $venvPy -m playwright install chromium
+# 약 300MB 라 받다가 시간 초과로 끊길 때가 있다 — 두 번까지 다시 받는다 (2026-10-14 실측: 두 번째에 통과)
+foreach ($try in 1..3) {
+    & $venvPy -m playwright install chromium
+    if ($LASTEXITCODE -eq 0) { break }
+    if ($try -lt 3) { Write-Host "  ! 받다가 끊겼습니다. 다시 받습니다 ($try/2)..." -ForegroundColor Yellow; Start-Sleep 5 }
+}
 if ($LASTEXITCODE -ne 0) { Stop-Failed "브라우저 제어 도구 설치" }
 Write-Host "  OK" -ForegroundColor Green
 

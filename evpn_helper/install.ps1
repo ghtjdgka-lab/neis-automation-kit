@@ -12,7 +12,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Source
 )
 $ErrorActionPreference = 'Stop'
-$TaskName = 'NeisAutomation EVPN 도우미'
+$OldTaskName = 'NeisAutomation EVPN 도우미'
+# 작업 이름에 계정을 붙인다 — 이름이 PC에 하나면 다른 계정이 설치할 때 덮어써진다 (2026-10-14 실측)
+$UserLeaf = $User.Split('\')[-1]
+$TaskName = "$OldTaskName ($UserLeaf)"
 $Dst = Join-Path $env:ProgramFiles 'NeisAutomationEVPN'
 $LogDir = Join-Path $env:ProgramData 'NeisAutomationEVPN'
 $Bin = 'C:\ProgramData\AXGATE\AXGATE VPN Client\Bin'
@@ -75,6 +78,11 @@ try {
     $s = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
     Register-ScheduledTask -TaskName $TaskName -Action $a -Principal $p -Settings $s -Force | Out-Null
+    # 예전 이름(계정 없음)으로 이 계정 것이 있으면 지운다 — 남의 계정 것이면 건드리지 않는다
+    $old = Get-ScheduledTask -TaskName $OldTaskName -ErrorAction SilentlyContinue
+    if ($old -and ($old.Principal.UserId.Split('\')[-1] -eq $UserLeaf)) {
+        Unregister-ScheduledTask -TaskName $OldTaskName -Confirm:$false
+    }
 
     Done 'OK' "설치 완료 · AXGATE 파일 $($lines.Count)개 기준 기록"
 }

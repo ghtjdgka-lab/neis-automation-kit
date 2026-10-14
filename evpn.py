@@ -40,7 +40,10 @@ SEOUL_EVPN_URL = "https://evpn.sen.go.kr/"
 CLIENT_EXE = Path(r"C:\ProgramData\AXGATE\AXGATE VPN Client\Bin\AxgateVpnClient.exe")
 AGENT_PORT = 46435                       # 포털이 에이전트를 찾는 로컬 포트
 TAP_KEYWORDS = ("TAP-Win32", "AXGATE", "TAP-Windows")
-TASK_NAME = "NeisAutomation EVPN 도우미"
+# 예약 작업은 PC 전체에 하나라서, 이름에 계정을 붙인다 — 같은 PC를 두 계정이 쓰면 나중에 설치한 쪽이
+# 앞사람 도우미를 덮어써 앞사람의 자동 연결이 «권한 없음»으로 깨졌다 (2026-10-14 실측)
+OLD_TASK_NAME = "NeisAutomation EVPN 도우미"
+TASK_NAME = f"{OLD_TASK_NAME} ({os.environ.get('USERNAME', '')})"
 HELPER_LOG = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "NeisAutomationEVPN" / "helper.log"
 INSTALL_RESULT = HELPER_LOG.parent / "install_result.txt"
 DONE_FLAG = teacher_config.CONFIG_DIR / "evpn_helper_done.flag"
@@ -161,10 +164,18 @@ def agent_listening() -> bool:
     return code == 0 and out.isdigit() and int(out) > 0
 
 
+def _task_name() -> str | None:
+    """이 계정 이름이 붙은 작업을 먼저, 없으면 예전 이름(계정 이름 없음)을 쓴다 — 예전에 설치한 분도 그대로 돌게."""
+    for name in (TASK_NAME, OLD_TASK_NAME):
+        r = subprocess.run(["schtasks", "/Query", "/TN", name], capture_output=True,
+                           creationflags=_NO_WINDOW)
+        if r.returncode == 0:
+            return name
+    return None
+
+
 def helper_installed() -> bool:
-    r = subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True,
-                       creationflags=_NO_WINDOW)
-    return r.returncode == 0
+    return _task_name() is not None
 
 
 def helper_running() -> bool:
@@ -193,7 +204,10 @@ def start_helper() -> bool:
         DONE_FLAG.unlink()
     except FileNotFoundError:
         pass
-    r = subprocess.run(["schtasks", "/Run", "/TN", TASK_NAME], capture_output=True,
+    name = _task_name()
+    if not name:
+        return False
+    r = subprocess.run(["schtasks", "/Run", "/TN", name], capture_output=True,
                        creationflags=_NO_WINDOW)
     return r.returncode == 0
 
@@ -510,9 +524,8 @@ def disconnect() -> bool:
 # ============================================================ setup
 def setup(user: str | None) -> int:
     cfg = _cfg()
-    if not cfg:
-        print("❌  설정 파일이 없습니다 — 먼저 python setup_wizard.py")
-        return 1
+    if not cfg:     # EVPN 만 먼저 쓰는 분도 있다 — 출결 설정(마법사) 없이 지역 주소만 기본값으로 시작
+        cfg = {"neis_url": teacher_config.DEFAULTS["neis_url"]}
     if user:
         cfg["evpn_user"] = user.strip()
         teacher_config.save_config(cfg)
@@ -557,6 +570,8 @@ def status() -> int:
     print(f"AXGATE 클라이언트     {'설치됨' if client_installed() else '❌ 없음'}")
     print(f"EVPN 도우미          {'설치됨' if helper_installed() else '❌ 없음 → python evpn.py install'}")
     print(f"EVPN 아이디·비밀번호  {'있음' if u else '❌ 아이디 없음'} / {'있음' if p else '❌ 없음'}")
+    cn = _cfg().get("cert_name")    # 없으면 연결은 되다가 2차 인증 창에서 멈춘다 (2026-10-14 실측)
+    print(f"인증서 이름(2차 인증)  {'있음' if cn else '❌ 없음 → python setup_wizard.py'}")
     print(f"VPN 어댑터           {tap_status()}")
     try:    # 연결이 돼도 이게 없으면 나이스 [인증서 로그인] 이 아무 반응이 없다 (2026-10-02 실측)
         import neis_cert

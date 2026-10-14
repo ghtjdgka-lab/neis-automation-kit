@@ -20,6 +20,8 @@
       "PowerShell(Get-ChildItem *)",
       "PowerShell(Get-Content *)",
       "PowerShell(Test-Path *)",
+      "PowerShell(Get-ScheduledTask *)",
+      "PowerShell(schtasks /Query *)",
       "PowerShell(.\\setup.ps1)",
       "PowerShell(.\\setup.ps1 *)",
       "PowerShell(.\\.venv\\Scripts\\python.exe *)",
