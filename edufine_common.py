@@ -144,9 +144,30 @@ def wait_profile_free(timeout=180):
                      "그 작업이 끝나거나 그 크롬 창을 닫은 뒤 다시 실행해 주세요." % timeout)
 
 
+def allow_wxsclient():
+    """기안기(wxsclient://) 를 «항상 열기» 로 미리 허용한다.
+    처음 쓰는 크롬 프로필은 «WXSClient MFC 응용 프로그램을 여시겠습니까?» 를 묻는데, 크롬이 그린 창이라
+    스크립트가 못 누르고 기안 창이 30초 안에 안 뜬다 (2026-10-14 실측). 그 창의 [항상 허용] 체크와 같은 값이다."""
+    from urllib.parse import urlsplit
+    u = urlsplit(KLEF)
+    origin = "%s://%s" % (u.scheme, u.netloc)
+    pref = Path(PROFILE_DIR) / "Default" / "Preferences"
+    try:
+        d = json.loads(pref.read_text(encoding="utf-8")) if pref.exists() else {}
+        pairs = d.setdefault("protocol_handler", {}).setdefault("allowed_origin_protocol_pairs", {})
+        if pairs.get(origin, {}).get("wxsclient") is True:
+            return
+        pairs.setdefault(origin, {})["wxsclient"] = True
+        pref.parent.mkdir(parents=True, exist_ok=True)
+        pref.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:                  # 못 고쳐도 손으로 [열기] 를 누르면 되니 멈추지 않는다
+        log("  (기안기 열기 허용을 미리 못 넣었습니다: %s)" % e)
+
+
 def launch(p):
     """에듀파인 전용 크롬을 띄우고 (ctx, page) 를 돌려준다."""
     wait_profile_free()
+    allow_wxsclient()
     kw = dict(user_data_dir=PROFILE_DIR, headless=False, args=CHROME_ARGS,
               ignore_default_args=["--enable-automation"], viewport=None)
     try:
@@ -312,7 +333,15 @@ def manual_login(page):
 
 def login(page, cert_name, cert_pw):
     log("🔐 업무포털 로그인 (지역: %s / %s)" % (REGION, PORTAL))
-    page.goto(PORTAL, wait_until="domcontentloaded")
+    for i in range(3):      # 첫 접속이 가끔 net::ERR_CERT_AUTHORITY_INVALID 로 튕긴다 — 바로 다시 하면 된다 (2026-10-06 실측)
+        try:
+            page.goto(PORTAL, wait_until="domcontentloaded")
+            break
+        except Exception as e:
+            if i == 2 or "net::" not in str(e):
+                raise
+            log("  (첫 접속이 튕겨서 다시 들어갑니다: %s)" % str(e).splitlines()[0][:80])
+            page.wait_for_timeout(3000)
     wait_overlay_gone(page, timeout=90)
     btn = page.get_by_role("button", name="교육행정 전자서명 인증서 로그인", exact=True)
     reloaded = False
@@ -384,7 +413,11 @@ def login(page, cert_name, cert_pw):
         box = page.locator("#nexacontainer.nexamodaloverlay")
         if box.count():
             raise SystemExit("로그인 중 알림: " + box.first.inner_text()[:200])
-        if "errorCode=1800" in page.url or "중복로그인" in (page.content()[:5000]):
+        try:                       # 로그인 직후엔 화면이 넘어가는 중이라 content() 가 예외를 낸다 (2026-10-06 실측)
+            html = page.content()[:5000]
+        except Exception:
+            continue
+        if "errorCode=1800" in page.url or "중복로그인" in html:
             raise SystemExit("「중복로그인」으로 끊겼습니다. 평소 쓰는 크롬에서 업무포털을 로그아웃하고 다시 실행해 주세요.")
     return manual_login(page)
 
