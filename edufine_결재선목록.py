@@ -18,6 +18,7 @@ from pathlib import Path
 import edufine_common as E
 import edufine_gian as G
 from edufine_gian import Stop, keyboard, mouse, win32con, win32gui
+from pywinauto import Desktop
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "나의결재선.json"
@@ -86,6 +87,37 @@ def clear_autosave(wait):
         time.sleep(0.5)
 
 
+def handle_absent():
+    """결재선에 부재중인 결재자가 있으면 에듀파인이 «결재경로설정» 창과 «…사용자가 현재 부재중입니다» 알림을
+    저절로 띄운다 (2026-10-14 실측 — 교감 부재). 알림은 [확인], 결재경로설정 창은 저장 없이 닫는다.
+    ★ 그 창의 [삭제] 는 저장된 나의결재선을 지우는 단추라 절대 누르지 않는다. 부재중 문구를 돌려준다.
+    ⚠️ 이렇게 닫으면 기안 창 결재경로 표가 앞 결재선 그대로일 수 있다 → 부재자가 든 결재선의 «결재경로» 는 믿지 말 것
+       (이름 목록은 정확). 정확한 경로는 edufine_결재선만들기.py "이름" --확인 으로 본다."""
+    notes = []
+    for _ in range(6):
+        time.sleep(0.5)
+        msgs = [m for m in G.windows("#32770", G.MSG_TITLE, G.wxs_pids()) if "부재" in G.msg_text(m)]
+        for m in msgs:
+            notes.append(G.msg_text(m)[:120])
+            G.press_msg(m, "확인")
+        for d in G.windows(G.IE_DLG, "결재경로설정", G.wxs_pids()):
+            win32gui.PostMessage(d, win32con.WM_CLOSE, 0, 0)
+            time.sleep(1.0)
+        if notes and not G.windows(G.IE_DLG, "결재경로설정", G.wxs_pids()):
+            break
+    return notes
+
+
+def refocus_preset(h):
+    cb, _ = G.preset_value(G.gian_window(h))
+    r = cb.rectangle()
+    G.focus(h)
+    mouse.click(coords=(r.left + 30, (r.top + r.bottom) // 2))
+    time.sleep(0.5)
+    keyboard.send_keys("{ESC}")
+    time.sleep(0.3)
+
+
 def read_presets(h):
     cb, cur = G.preset_value(G.gian_window(h))
     r = cb.rectangle()
@@ -105,12 +137,16 @@ def read_presets(h):
         else:
             same = 0
             last = cur
-            if cur.strip() and not cur.strip().startswith("["):     # «[현재 결재선]» 은 빈 기본값
+            if cur.strip() and cur.strip() != "[현재 결재선]":     # «[현재 결재선]» 은 빈 기본값
                 time.sleep(1.5)                                     # 결재경로 표가 다시 그려질 시간
+                absent = handle_absent()
+                if absent:
+                    refocus_preset(h)                               # 알림·창을 닫았으니 ↓ 가 다시 나의결재선에 먹게
                 rows = G.route_rows(h)
                 found.append({"이름": cur.strip(),
-                              "결재경로": [" ".join(x[:4]) for x in rows]})
-                E.log("  · %s" % cur.strip())
+                              "결재경로": [" ".join(x[:4]) for x in rows],
+                              "부재중": absent})
+                E.log("  · %s%s" % (cur.strip(), "   ⚠️ 부재중인 결재자 있음" if absent else ""))
                 for x in rows:
                     E.log("      %s" % " | ".join(x[:4]))
         keyboard.send_keys("{DOWN}")
@@ -164,6 +200,7 @@ def main():
     G.focus(h)
     E.log("📋 나의결재선 읽는 중 (저장·상신하지 않습니다)")
     found = read_presets(h)
+    handle_absent()                      # 남은 결재경로설정 창이 있으면 먼저 닫는다 — 기안 창만 닫고 이게 남았었다 (10/14)
     closed = close_without_save(h)
     OUT.write_text(json.dumps(found, ensure_ascii=False, indent=2), encoding="utf-8")
     E.log("\n✅ 결재선 %d개를 읽었습니다 → %s" % (len(found), OUT.name))

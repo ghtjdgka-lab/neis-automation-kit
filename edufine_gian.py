@@ -175,6 +175,37 @@ def card_text(w):
     return ""
 
 
+def card_rows(pop):
+    """과제카드 창 결과 줄 — [(글자, 화면 y)]. 못 읽으면 None, «조회 결과가 없습니다» 면 []."""
+    try:
+        d = Desktop(backend="uia").window(handle=pop)
+        _, top, _, _ = win32gui.GetWindowRect(pop)
+        out, empty = [], False
+        for c in d.descendants(control_type="Text"):
+            t = (c.window_text() or "").strip()
+            r = c.rectangle()
+            if not (270 <= r.top - top <= 515):
+                continue
+            if "조회 결과가 없습니다" in t:
+                empty = True
+            elif t.startswith("[") and "]" in t:
+                out.append((t, (r.top + r.bottom) // 2))
+        return out if (out or empty) else None
+    except Exception:
+        return None
+
+
+def close_card_popup(pop):
+    try:
+        for b in Desktop(backend="uia").window(handle=pop).descendants(control_type="Button"):
+            aid = b.element_info.automation_id or ""
+            if aid.endswith("form.btnOk") or aid.endswith("btnClose00"):
+                mouse.click(coords=center(b))
+                time.sleep(0.8)
+    except Exception:
+        pass
+
+
 def set_card(h, card):
     w = gian_window(h)
     if norm(card) in norm(card_text(w)):
@@ -194,11 +225,28 @@ def set_card(h, card):
         raise Stop("과제카드선택 창이 40초 안에 안 떴습니다")
     time.sleep(1.2)                                      # 목록이 그려질 시간
     focus(pop)
+    # 카드 이름이 «[단위과제] 카드명» 꼴이면 검색은 대괄호 안(단위과제)으로 하고, 줄은 카드명까지 맞는 것을 고른다
+    m = re.match(r"\s*\[([^\]]+)\]\s*(.*)", card)
+    query, want = (m.group(1), card) if m else (card, card)
     rel_click(pop, 350, 176)                             # 단위과제카드명 칸
-    paste(card)
-    rel_click(pop, 734, 131, 2.0)                        # [조회]
-    rel_click(pop, 44, 281, 0.5)                         # 결과 첫 줄
-    shot(pop, "품의_과제카드.png")
+    paste(query)
+    rel_click(pop, 734, 131, 3.0)                        # [조회]
+    rows = card_rows(pop)                                # 창 안 글자를 읽어 맞는 줄을 고른다 (2026-10-06: 과제카드 창은 UIA 로 읽힌다)
+    hit = [] if rows is None else (
+        [r for r in rows if norm(want) in norm(r[0])] or ([] if m else [r for r in rows if norm(query) in norm(r[0])]))
+    if rows is not None and not hit:
+        shot(pop, "과제카드_없음.png")
+        close_card_popup(pop)
+        raise Stop("과제카드 '%s' 가 내 목록에 없습니다. 검색 결과: %s\n"
+                   "  (과제카드 창에는 «내가 쓸 수 있는» 카드만 나옵니다 — 지난 내 공문에 쓰인 카드 이름을 적어 주세요)"
+                   % (card, " / ".join(r[0] for r in rows) or "없음"))
+    left, top, _, _ = win32gui.GetWindowRect(pop)
+    if hit:
+        mouse.click(coords=(left + 44, hit[0][1]))       # 그 줄의 선택 칸
+        time.sleep(0.5)
+    else:
+        rel_click(pop, 44, 281, 0.5)                     # 글자를 못 읽으면 예전처럼 첫 줄
+    shot(pop, "과제카드.png")
     rel_click(pop, 714, 531, 1.0)                        # [확인]
     for _ in range(20):
         if not win32gui.IsWindow(pop) or not win32gui.IsWindowVisible(pop):
@@ -210,9 +258,48 @@ def set_card(h, card):
     return got
 
 
-def set_disclosure(h, what):
+def click_label(h, label):
+    """라디오·체크박스는 크기가 0 이라 옆 글자의 왼쪽 끝을 누른다 (맨 위 줄 = 문서정보 칸)."""
+    texts = [c for c in gian_window(h).descendants(control_type="Text") if (c.window_text() or "") == label]
+    if not texts:
+        raise Stop("'%s' 글자를 못 찾았습니다" % label)
+    t = min(texts, key=lambda c: (c.rectangle().top, c.rectangle().left)).rectangle()
+    mouse.click(coords=(t.left + 7, (t.top + t.bottom) // 2))
+    time.sleep(1.0)
+
+
+def set_partial(h, what, reason=""):
+    """부분공개(6) · 비공개(5) 처럼 «호» 가 붙은 값. 정보공개법 제9조 제1항 — 5호 의사결정 과정 · 6호 개인정보 · 7호 영업비밀.
+    호 체크박스와 공개제한사유 칸은 «부분공개/비공개» 를 고른 뒤에만 쓸 수 있다 (2026-10-06 공용서식 실측)."""
+    m = re.fullmatch(r"(부분공개|비공개)\((\d)\)", norm(what))
+    if not m:
+        raise Stop("공개여부 '%s' 를 모르겠습니다 — 공개 · 비공개 · 부분공개(6) · 비공개(5) 꼴로 적어 주세요" % what)
+    kind, ho = m.groups()
+    click_label(h, kind)
+    want = {"부분공개": "othbcLmtt2", "비공개": "othbcLmtt3"}[kind]
+    w = gian_window(h)
+    if not any(c.element_info.automation_id == want and c.is_selected() for c in w.descendants(control_type="RadioButton")):
+        raise Stop("공개여부가 '%s' 로 안 골라졌습니다" % kind)
+    box = [c for c in w.descendants(control_type="CheckBox") if c.element_info.automation_id == "othbcAt" + ho]
+    if not box:
+        raise Stop("공개제한근거 %s호 칸을 못 찾았습니다" % ho)
+    if box[0].get_toggle_state() != 1:
+        click_label(h, "%s호" % ho)
+    box = [c for c in gian_window(h).descendants(control_type="CheckBox") if c.element_info.automation_id == "othbcAt" + ho]
+    if box[0].get_toggle_state() != 1:
+        raise Stop("공개제한근거 %s호에 체크가 안 됐습니다" % ho)
+    if reason:
+        e = [c for c in gian_window(h).descendants(control_type="Edit") if c.element_info.automation_id == "othbcLmttResn"]
+        if e:
+            e[0].click_input()
+            paste(reason)
+
+
+def set_disclosure(h, what, reason=""):
+    if "(" in what:
+        return set_partial(h, what, reason)
     if what not in DISCLOSURE:
-        raise Stop("공개여부 '%s' 는 자동으로 고르지 않습니다 (공개·비공개만). 부분공개는 선생님이 기안기에서 직접" % what)
+        raise Stop("공개여부 '%s' 는 자동으로 고르지 않습니다 (공개·비공개·부분공개(6) 꼴)" % what)
     w = gian_window(h)
     texts = [c for c in w.descendants(control_type="Text") if (c.window_text() or "") == what]
     if not texts:
@@ -233,6 +320,16 @@ def preset_value(w):
     return cb[0], (cb[0].legacy_properties().get("Value") or "")
 
 
+def absent_notice():
+    """결재선에 부재중인 결재자(출장 등)가 있으면 에듀파인이 «결재경로설정» 창 + «…부재중입니다» 알림을 저절로 띄운다.
+    그 알림 글자를 돌려준다 (없으면 None). 창은 건드리지 않는다 — 이 창의 [삭제] 는 저장된 결재선을 지운다."""
+    for m in windows("#32770", MSG_TITLE, wxs_pids()):
+        t = msg_text(m)
+        if "부재" in t:
+            return t
+    return None
+
+
 def set_preset(h, name):
     """나의결재선 목록은 그림으로 떠서 글자를 못 읽는다 → 닫힌 채로 ↓ 를 눌러 한 칸씩 내려가며 값이 맞는지 본다."""
     cb, cur = preset_value(gian_window(h))
@@ -246,16 +343,28 @@ def set_preset(h, name):
     keyboard.send_keys("{HOME}")
     time.sleep(0.8)
     seen = []
-    for _ in range(30):
+    same = 0
+    for _ in range(40):
+        t = absent_notice()
+        if t:          # 부재 알림이 뜨면 ↓ 가 그 창에 먹어서 엉뚱한 결재선이 골라질 수 있다 → 멈춘다 (2026-10-14 교감 출장일 실측)
+            raise Stop("결재선을 고르다가 «부재중» 알림이 떴습니다: %s — "
+                       "  결재자가 출장·휴가 중인 날은 자동으로 고르지 않습니다. 기안 창에서 직접 고르시거나 복귀 뒤 다시 해 주세요." % t[:120])
         _, cur = preset_value(gian_window(h))
         if norm(cur) == norm(name):
             time.sleep(2.0)                                         # 결재경로 표가 다시 그려질 시간
+            t = absent_notice()
+            if t:
+                raise Stop("고른 결재선에 부재중인 결재자가 있습니다: %s — 기안 창에서 확인해 주세요" % t[:120])
             return
         if seen and cur == seen[-1]:
-            break                                                   # 맨 아래까지 왔다
-        seen.append(cur)
+            same += 1                                               # ↓ 가 가끔 안 먹는다 (2026-10-06 실측) — 세 번 같아야 맨 아래
+            if same >= 3:
+                break
+        else:
+            same = 0
+            seen.append(cur)
         keyboard.send_keys("{DOWN}")
-        time.sleep(0.6)
+        time.sleep(0.8)
     raise Stop("나의결재선에 '%s' 가 없습니다. 있는 것: %s" % (name, " / ".join(seen)))
 
 
