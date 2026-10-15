@@ -177,6 +177,9 @@ def run(link: str, dry: bool = False) -> int:
     job = data["id"]
     if dry:
         print("🧪 시험 — 링크를 풀어 보기만 했습니다. 에듀파인·나이스는 열지 않았습니다.")
+        n = len(data["plan"].get("품목", [])) if data["kind"] == "품의" else len(data["rows"])
+        print("RESULT_JSON=" + json.dumps({"시험": "풀림", "주문서": job, "종류": data["kind"], "줄": n},
+                                          ensure_ascii=False))
         return 0
 
     age = (time.time() * 1000 - float(data.get("ts", 0))) / 60000
@@ -209,10 +212,14 @@ def run(link: str, dry: bool = False) -> int:
     print("그동안 마우스·키보드를 건드리지 말고 기다려 주세요.\n", flush=True)
 
     result = {}
+    # 검은 창은 닫으면 기록이 사라진다 — 같은 내용을 파일에도 남긴다 (나중에 확인·원격 점검용)
+    log = (PLANS / ("품의_%s.log" % job)).open("w", encoding="utf-8")
     p = subprocess.Popen(cmd, cwd=str(HERE), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace")
     for line in p.stdout:
         print(line, end="", flush=True)
+        log.write(line)
+        log.flush()
         if line.startswith("RESULT_JSON="):
             try:
                 result = json.loads(line.split("=", 1)[1])
@@ -238,7 +245,11 @@ def run(link: str, dry: bool = False) -> int:
     else:
         print("❌ 저장 전에 멈췄습니다: %s" % (result.get("이유") or result.get("오류") or "위 기록을 보세요"))
         print("   시트에서 고친 뒤 메뉴를 다시 누르면 새 링크로 다시 올릴 수 있습니다.")
-    print("RESULT_JSON=" + json.dumps({"주문서": job, "상태": state, "품의번호": num}, ensure_ascii=False))
+    final = "RESULT_JSON=" + json.dumps({"주문서": job, "상태": state, "품의번호": num}, ensure_ascii=False)
+    print(final)
+    log.write(final + "\n")
+    log.close()
+    print("기록: %s" % log.name)
     return 0 if state == "✅" else 1
 
 
