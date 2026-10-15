@@ -32,6 +32,7 @@ CONFIG = BASE / "teacher_config.json"
 NO_WINDOW = 0x08000000
 ENV = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
 WARM_EVERY = 5 * 60 * 1000
+RELAUNCH_EVERY = 60 * 1000      # 크롬을 닫았으면 1분 안에 다시 최소화로 띄워 데운다 (안 데우려면 메뉴 «미리 열어두기» 끄기)
 PORTS = {"neis": 9322, "edufine": 9324}
 
 BG, INK, LINE = "#fffaf2", "#3b2f25", "#d9ccb8"
@@ -206,6 +207,14 @@ class Widget:
             self.warm_all(False)
         self.root.after(WARM_EVERY, self.loop_warm)
 
+    def loop_relaunch(self):
+        """닫힌 크롬을 다시 데운다 — 1분마다 포트만 보고, 없을 때만 warm --launch."""
+        if self.prewarm and not self.busy and configured():
+            for site, port in PORTS.items():
+                if not port_alive(port):
+                    threading.Thread(target=self.warm, args=(site, True), daemon=True).start()
+        self.root.after(RELAUNCH_EVERY, self.loop_relaunch)
+
     def toggle_prewarm(self):
         self.prewarm = bool(self.prewarm_var.get())
         save_state(prewarm=self.prewarm)
@@ -228,6 +237,7 @@ class Widget:
     def mainloop(self):
         self.tick()
         self.root.after(WARM_EVERY, self.loop_warm)
+        self.root.after(RELAUNCH_EVERY, self.loop_relaunch)
         if not configured():
             self.root.after(800, lambda: self.say("오른쪽 클릭 → 인증서 설정부터 해 주세요", "#c0392b", 15000))
         elif self.prewarm:
