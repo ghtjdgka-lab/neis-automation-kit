@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""구글 시트 [📮 품의 올리기] 링크 → 이 컴퓨터에서 에듀파인 품의를 올린다.
+"""구글 시트 [📮 품의 올리기]·[🕘 복무 상신] 링크 → 이 컴퓨터에서 에듀파인 품의 / 나이스 복무를 올린다.
 
   .\\.venv\\Scripts\\python.exe -X utf8 edufine_punui_link.py 설치     edufine-punui:// 링크를 이 컴퓨터에 등록 (한 번만)
   .\\.venv\\Scripts\\python.exe -X utf8 edufine_punui_link.py 확인     등록됐는지 · 올린 기록 보기
@@ -13,6 +13,11 @@
   → 컴퓨터에 구글 로그인·토큰·웹앱이 필요 없다. 시트 주인이 누구든 같은 방식으로 된다.
   (조우열 연구위원님 «과학 물품 구매» 시트의 edufine-punui:// 방식을 따름. 그분은 숨은 탭에 주문서를 두고
    토큰으로 읽었고, 여기서는 링크에 담아 토큰을 없앴다)
+
+주문서 종류 (kind):
+  - 없음/"품의"  edufine_punui.py 채우기 <json> [--저장] [--결재요청]
+  - "복무"       줄마다 main_bokmu.py --type 조퇴 --date … --start … --end … --reason … [--dry-run]
+                 연락처·개인결재선은 시트에 안 싣는다 — 이 컴퓨터 설정(contact·approval_line)에서 읽는다
 
 안전장치 (두 번 올라가는 사고 막기):
   - 주문서마다 번호가 있고, 한 번 시작한 번호는 다시 안 돌린다 (%LOCALAPPDATA%\\neis-automation\\punui_link_done.json)
@@ -38,6 +43,9 @@ DONE = teacher_config.CONFIG_DIR / "punui_link_done.json"
 PLANS = teacher_config.CONFIG_DIR / "punui_link"
 MAX_AGE_MIN = 15
 SCOPE_ARGS = {"화면 채우기만": [], "저장까지": ["--저장"], "결재올림까지": ["--저장", "--결재요청"]}
+BOKMU_SCOPE = {"입력만": ["--dry-run"], "상신까지": []}
+BOKMU_TYPES = ("지각", "조퇴", "외출", "병지각", "병조퇴", "병외출")
+BOKMU_MAX = 5
 
 
 def venv_python() -> str:
@@ -93,10 +101,26 @@ def decode(link: str) -> dict:
         raise SystemExit("링크 모양이 다릅니다: %s…" % link[:60])
     raw = m.group(1)
     data = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode("utf-8"))
-    if data.get("v") != 1 or not data.get("id") or not isinstance(data.get("plan"), dict):
+    kind = data.setdefault("kind", "품의")
+    if data.get("v") != 1 or not data.get("id") or kind not in ("품의", "복무"):
         raise SystemExit("시트 버전이 이 프로그램과 맞지 않습니다 — 키트를 git pull 하거나 시트 사본을 새로 받으세요.")
-    if data.get("범위") not in SCOPE_ARGS:
-        raise SystemExit("올리기 범위가 이상합니다: %s" % data.get("범위"))
+    if kind == "품의":
+        if not isinstance(data.get("plan"), dict):
+            raise SystemExit("품의 주문서에 plan 이 없습니다.")
+        if data.get("범위") not in SCOPE_ARGS:
+            raise SystemExit("올리기 범위가 이상합니다: %s" % data.get("범위"))
+        return data
+    if data.get("범위") not in BOKMU_SCOPE:
+        raise SystemExit("복무 범위가 이상합니다: %s" % data.get("범위"))
+    rows = data.get("rows")
+    if not isinstance(rows, list) or not 1 <= len(rows) <= BOKMU_MAX:
+        raise SystemExit("복무 줄은 1~%d개여야 합니다." % BOKMU_MAX)
+    for r in rows:
+        ok = (r.get("종류") in BOKMU_TYPES and re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(r.get("날짜", "")))
+              and re.fullmatch(r"\d{2}:\d{2}", str(r.get("시작", ""))) and re.fullmatch(r"\d{2}:\d{2}", str(r.get("끝", "")))
+              and str(r.get("사유", "")).strip() and r["시작"] < r["끝"])
+        if not ok:
+            raise SystemExit("복무 줄 값이 이상합니다: %s" % r)
     return data
 
 
@@ -115,6 +139,14 @@ def mark(job_id: str, **kw) -> None:
 
 
 def show(data: dict) -> None:
+    if data["kind"] == "복무":
+        print("━" * 60)
+        print("복무 주문서 %s  (범위: %s)" % (data["id"], data["범위"]))
+        for r in data["rows"]:
+            print("  · %s  %s %s~%s  %s%s" % (r["종류"], r["날짜"], r["시작"], r["끝"], r["사유"],
+                                             "  [결재선 %s]" % r["결재선"] if r.get("결재선") else ""))
+        print("━" * 60)
+        return
     p = data["plan"]
     print("━" * 60)
     print("품의 주문서 %s  (올리기 범위: %s)" % (data["id"], data["범위"]))
@@ -144,7 +176,7 @@ def run(link: str, dry: bool = False) -> int:
     show(data)
     job = data["id"]
     if dry:
-        print("🧪 시험 — 링크를 풀어 보기만 했습니다. 에듀파인은 열지 않았습니다.")
+        print("🧪 시험 — 링크를 풀어 보기만 했습니다. 에듀파인·나이스는 열지 않았습니다.")
         return 0
 
     age = (time.time() * 1000 - float(data.get("ts", 0))) / 60000
@@ -157,7 +189,10 @@ def run(link: str, dry: bool = False) -> int:
               % (job, prev.get("시각"), prev.get("상태")))
         print("   다시 올려야 하면 에듀파인 품의목록을 먼저 보고, 시트에서 메뉴를 다시 눌러 새 링크로 올리세요.")
         return 1
-    mark(job, 시각=datetime.now().strftime("%m-%d %H:%M"), 상태="진행중", 제목=data["plan"].get("제목"))
+    title = data["plan"].get("제목") if data["kind"] == "품의" else "복무 %d건" % len(data["rows"])
+    mark(job, 시각=datetime.now().strftime("%m-%d %H:%M"), 상태="진행중", 제목=title)
+    if data["kind"] == "복무":
+        return run_bokmu(data)
 
     PLANS.mkdir(parents=True, exist_ok=True)
     plan_file = PLANS / ("품의_%s.json" % job)
@@ -207,6 +242,64 @@ def run(link: str, dry: bool = False) -> int:
     return 0 if state == "✅" else 1
 
 
+# ── 복무 ────────────────────────────────────────────────────
+def bokmu_rows(data: dict) -> list:
+    """줄마다 main_bokmu.py 를 한 번씩. 앞 줄이 확실하지 않으면(⚠️) 뒤 줄은 돌리지 않는다."""
+    out = []
+    stop = False
+    for r in data["rows"]:
+        if stop:
+            out.append({**r, "상태": "건너뜀"})
+            continue
+        cmd = [venv_python(), "-X", "utf8", str(HERE / "main_bokmu.py"), "--type", r["종류"], "--date", r["날짜"],
+               "--start", r["시작"], "--end", r["끝"], "--reason", r["사유"]] + BOKMU_SCOPE[data["범위"]]
+        if str(r.get("결재선", "")).strip():         # 그 줄만 다른 개인결재선 (비우면 설정의 approval_line)
+            cmd += ["--approval-line", str(r["결재선"]).strip()]
+        print("\n▶️  %s %s %s~%s" % (r["종류"], r["날짜"], r["시작"], r["끝"]), flush=True)
+        code = subprocess.run(cmd, cwd=str(HERE), stdin=subprocess.DEVNULL).returncode
+        if code == 0:
+            st = "✅ 입력만" if data["범위"] == "입력만" else "✅ 상신"
+        else:
+            # main_bokmu 의 1 은 «안 올라갔다» 가 아니라 «확인 필요» — 다시 돌리면 두 번 상신될 수 있다
+            st = "⚠️ 확인 필요"
+            stop = True
+        out.append({**r, "상태": st})
+    return out
+
+
+def run_bokmu(data: dict) -> int:
+    PLANS.mkdir(parents=True, exist_ok=True)
+    f = PLANS / ("복무_%s.json" % data["id"])
+    f.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    print("\n지금부터 몇 분 동안 창이 뜨고 마우스가 저절로 움직입니다.")
+    print("그동안 마우스·키보드를 건드리지 말고 기다려 주세요.\n", flush=True)
+    if portal_direct():
+        print("🏫 업무포털이 바로 열립니다 — VPN 없이 갑니다")
+        results = bokmu_rows(data)
+    else:
+        # VPN 은 한 번만 붙였다가 끊는다 — 줄 전부를 VPN 안에서 돌리고 결과는 파일로 받는다
+        print("🌐 학교 밖입니다 — EVPN 을 붙였다가 끝나면 끊습니다 (2차 인증이 뜨면 직접 해 주세요)")
+        res_file = PLANS / ("복무_%s_결과.json" % data["id"])
+        cmd = [venv_python(), "-X", "utf8", str(HERE / "run_vpn.py"), "--minutes", str(4 * len(data["rows"]) + 2), "--",
+               venv_python(), "-X", "utf8", str(Path(__file__).resolve()), "_복무실행", str(f), str(res_file)]
+        subprocess.run(cmd, cwd=str(HERE), stdin=subprocess.DEVNULL)
+        try:
+            results = json.loads(res_file.read_text(encoding="utf-8"))
+        except Exception:
+            results = [{**r, "상태": "⚠️ 확인 필요"} for r in data["rows"]]
+    state = "✅" if all(r["상태"].startswith("✅") for r in results) else "⚠️"
+    mark(data["id"], 상태=state, 결과=results)
+    print("\n" + "━" * 60)
+    for r in results:
+        print("%s  %s %s %s~%s" % (r["상태"], r["종류"], r["날짜"], r["시작"], r["끝"]))
+    if state != "✅":
+        print("⚠️ 확인이 필요한 줄이 있습니다. 다시 올리지 말고 나이스 «개인근무상황관리» 목록부터 보세요.")
+    print("시트 메뉴 «✍️ 복무 결과 적기» 로 결과를 적어 두세요.")
+    print("RESULT_JSON=" + json.dumps({"주문서": data["id"], "상태": state,
+                                      "줄": [r["상태"] for r in results]}, ensure_ascii=False))
+    return 0 if state == "✅" else 1
+
+
 def main() -> int:
     args = sys.argv[1:]
     if not args:
@@ -231,6 +324,11 @@ def main() -> int:
         return uninstall()
     if a == "확인":
         return status()
+    if a == "_복무실행" and len(args) > 2:        # run_vpn 안에서 부르는 내부 단계
+        data = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+        res = bokmu_rows(data)
+        Path(args[2]).write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
+        return 0 if all(r["상태"].startswith("✅") for r in res) else 1
     if a == "시험" and len(args) > 1:
         return run(args[1], dry=True)
     print(__doc__)
