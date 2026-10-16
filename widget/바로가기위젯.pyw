@@ -3,8 +3,10 @@
 
   .\\.venv\\Scripts\\pythonw.exe widget\\바로가기위젯.pyw      (설정하면 바탕화면 바로가기가 생긴다)
 
-  [나이스] [에듀파인] [문서등록대장] [공람] [검수]  — 누르면 인증서 자동 로그인까지 해서 그 화면을 맨 앞에 띄운다.
-  [검수]는 다르다: 밀린 검사검수 건을 조회해 목록을 보여 주고, [등록하기]를 눌러야 등록한다 (edufine_inspect.py --go).
+  [나이스] [에듀파인] [문서등록대장] [공람] [검수] [복무]  — 앞의 넷은 누르면 인증서 자동 로그인까지 해서 그 화면을 맨 앞에 띄운다.
+  [검수]: 밀린 검사검수 건을 조회해 목록을 보여 주고, [등록하기]를 눌러야 등록한다 (edufine_inspect.py --go).
+  [복무]: 작은 창에서 종류(조퇴·외출·지각·병조퇴·병외출·병지각)·날짜·시각·사유를 고르고 [상신]을 누르면 나이스에 승인요청까지 올린다
+          (main_bokmu.py). 종료 시각 기본값은 설정의 «퇴근 시각»(학교마다 다르다 — 처음 설정에서 묻는다).
   위젯이 뜰 때 두 크롬을 «최소화된 채로» 미리 로그인해 두고 5분마다 세션을 살려 두므로, 클릭은 보통 1~2초.
   오른쪽 클릭: 인증서 설정 · 미리 열어두기 켜고 끄기 · 크롬 창 닫기 · 위젯 끄기.  끌어서 옮길 수 있다.
 
@@ -13,13 +15,14 @@
 import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -39,8 +42,10 @@ PORTS = {"neis": 9322, "edufine": 9324}
 BG, INK, LINE = "#fffaf2", "#3b2f25", "#d9ccb8"
 BTNS = [("나이스", "neis", "open", "#1b6fb5"), ("에듀파인", "edufine", "main", "#2f7d4f"),
         ("문서등록대장", "edufine", "open", "#8a5a2b"), ("공람", "edufine", "cnrs", "#6b4fb5"),
-        ("검수", "inspect", "check", "#d63a30")]
+        ("검수", "inspect", "check", "#d63a30"), ("복무", "bokmu", "form", "#c2417a")]
 INSPECT = HERE.parent / "edufine_inspect.py"      # 키트의 물품 검사검수 (조회만 / --go 등록)
+BOKMU = HERE.parent / "main_bokmu.py"             # 키트의 복무(근무상황) 상신
+BOKMU_TYPES = ["조퇴", "외출", "지각", "병조퇴", "병외출", "병지각"]
 
 
 def load_state():
@@ -84,6 +89,21 @@ def configured():
         return False
 
 
+def cfg():
+    try:
+        return json.loads(CONFIG.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def round5(hm):
+    h, m = map(int, hm.split(":"))
+    m = round(m / 5) * 5
+    if m == 60:
+        h, m = (h + 1) % 24, 0
+    return "%02d:%02d" % (h, m)
+
+
 class Widget:
     def __init__(self):
         st = load_state()
@@ -110,7 +130,8 @@ class Widget:
             b.bind("<Leave>", lambda e, w=b: w.configure(bg=BG))
             self.buttons[text] = b
         self.status = tk.Label(fr, text="", bg=BG, fg="#8a7a68", font=("Malgun Gothic", 9), padx=6)
-        self.status.pack(side="left")
+        self.spacer = tk.Label(fr, text=" ", bg=BG, font=("Malgun Gothic", 12), padx=4)   # 왼쪽 ⋮ 와 같은 폭 → 좌우 대칭
+        self.spacer.pack(side="left", fill="y")
         for w in (fr, grip):
             w.bind("<ButtonPress-1>", self.press)
             w.bind("<B1-Motion>", self.drag)
@@ -142,14 +163,24 @@ class Widget:
         self.m.tk_popup(e.x_root, e.y_root)
 
     # ── 말풍선 ──
+    def show_status(self, text, color):
+        """상태 글자는 있을 때만 막대에 붙인다 (없을 땐 빼서 단추만 남게)."""
+        if text:
+            self.status.configure(text=text, fg=color)
+            if not self.status.winfo_ismapped():
+                self.status.pack(side="left", before=self.spacer)
+        else:
+            self.status.configure(text="")
+            self.status.pack_forget()
+
     def say(self, text, color=INK, ms=4000):
-        self.status.configure(text=text, fg=color)
-        self.root.after(ms, lambda: self.status.configure(text="") if self.status.cget("text") == text else None)
+        self.show_status(text, color)
+        self.root.after(ms, lambda: self.show_status("", color) if self.status.cget("text") == text else None)
 
     def tick(self):
         if self.busy:
             dots = "." * (int(time.time() * 2) % 3 + 1)
-            self.status.configure(text=self.busy + dots, fg="#8a7a68")
+            self.show_status(self.busy + dots, "#8a7a68")
         self.root.after(400, self.tick)
 
     # ── 엔진 부르기 ──
@@ -183,6 +214,9 @@ class Widget:
             return
         if site == "inspect":
             self.inspect_check()
+            return
+        if site == "bokmu":
+            self.bokmu_form()
             return
         self.busy = text + " 여는 중"
 
@@ -250,6 +284,103 @@ class Widget:
             bad = [x for x in done if not x.get("성공")]
             msg = "검수 등록 끝 — 성공 %d건" % ok + ("\n실패 %d건:\n" % len(bad) + "\n".join("• %s %s" % (x.get("계약번호", ""), x.get("오류", "")[:80]) for x in bad) if bad else "")
             self.root.after(0, self.info, msg)
+        threading.Thread(target=fn, daemon=True).start()
+
+    # ── 복무 (근무상황 상신) ──
+    def bokmu_form(self):
+        c = cfg()
+        now = round5(datetime.now().strftime("%H:%M"))
+        end_default = c.get("work_end") or "16:20"
+        tip, fr = self.popup("복무 상신 — 고르고 [상신]을 누르면 나이스에 승인요청까지 올립니다")
+        g = tk.Frame(fr, bg=BG)
+        g.pack(padx=12, pady=(0, 6), anchor="w")
+        kind = tk.StringVar(value="조퇴")
+        v_date = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
+        v_start = tk.StringVar(value=now)
+        v_end = tk.StringVar(value=end_default)
+        v_reason = tk.StringVar(value="")
+        v_contact = tk.StringVar(value=c.get("contact", ""))
+        v_line = tk.StringVar(value=c.get("approval_line", ""))
+        f = ("Malgun Gothic", 9)
+
+        def row(r, label, var, width=12):
+            tk.Label(g, text=label, bg=BG, fg=INK, font=f).grid(row=r, column=0, sticky="w", pady=2)
+            e = tk.Entry(g, textvariable=var, font=f, width=width)
+            e.grid(row=r, column=1, sticky="w", padx=(8, 0), pady=2)
+            return e
+        tk.Label(g, text="종류", bg=BG, fg=INK, font=f).grid(row=0, column=0, sticky="w", pady=2)
+        kinds = tk.Frame(g, bg=BG)
+        kinds.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        for k in BOKMU_TYPES:
+            tk.Radiobutton(kinds, text=k, variable=kind, value=k, bg=BG, font=f, activebackground=BG).pack(side="left")
+        row(1, "날짜", v_date)
+        row(2, "시작", v_start, 7)
+        row(3, "종료", v_end, 7)
+        e_reason = row(4, "사유", v_reason, 30)
+        row(5, "연락처", v_contact, 16)
+        row(6, "결재선", v_line, 24)
+        hint = tk.Label(g, text="종료 기본값 = 설정의 퇴근 시각 %s · 5분 단위
+결재선 = 나이스 «개인결재선»에 이름 붙여 저장해 둔 그 이름 (없으면 나이스에서 먼저 만들어 두세요)" % end_default,
+                        bg=BG, fg="#8a7a68", font=("Malgun Gothic", 8), justify="left")
+        hint.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        def on_kind(*_):
+            k = kind.get()
+            if k in ("조퇴", "병조퇴"):
+                v_start.set(round5(datetime.now().strftime("%H:%M"))); v_end.set(end_default)
+            elif k in ("외출", "병외출"):
+                t = datetime.now(); v_start.set(round5(t.strftime("%H:%M"))); v_end.set(round5((t + timedelta(hours=1)).strftime("%H:%M")))
+            else:
+                v_start.set(c.get("work_start") or "08:40"); v_end.set(round5(datetime.now().strftime("%H:%M")))
+        kind.trace_add("write", on_kind)
+        e_reason.focus_set()
+        btns = tk.Frame(fr, bg=BG)
+        btns.pack(pady=(0, 10))
+        tk.Button(btns, text="상신", font=("Malgun Gothic", 9, "bold"), bg="#c2417a", fg="white", relief="flat", padx=12,
+                  command=lambda: self.bokmu_submit(tip, kind.get(), v_date.get().strip(), v_start.get().strip(), v_end.get().strip(), v_reason.get().strip(), v_contact.get().strip(), v_line.get().strip())).pack(side="left", padx=4)
+        tk.Button(btns, text="닫기", font=f, relief="flat", padx=10, command=tip.destroy).pack(side="left", padx=4)
+
+    def bokmu_submit(self, tip, kind, d, start, end, reason, contact, line):
+        for hm in (start, end):
+            if not re.fullmatch(r"\d{1,2}:\d{2}", hm):
+                self.say("시각은 15:30 처럼 적어 주세요", "#c0392b", 5000); return
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            self.say("날짜는 2026-10-16 처럼 적어 주세요", "#c0392b", 5000); return
+        if not reason:
+            self.say("사유를 적어 주세요", "#c0392b", 5000); return
+        if not re.fullmatch(r"[\d-]{9,14}", contact):
+            self.say("연락처를 010-1234-5678 처럼 적어 주세요 (나이스가 요구해요)", "#c0392b", 6000); return
+        if not line:
+            self.say("결재선 이름을 적어 주세요 (나이스 개인결재선에 저장한 이름)", "#c0392b", 7000); return
+        tip.destroy()
+        self.busy = "복무 상신 중"
+        c = cfg()
+        if c.get("contact") != contact or c.get("approval_line") != line:      # 다음부터 기본값으로
+            try:
+                c["contact"], c["approval_line"] = contact, line
+                CONFIG.write_text(json.dumps(c, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        args = [str(PY), "-X", "utf8", str(BOKMU), "--type", kind, "--date", d, "--start", round5(start), "--end", round5(end),
+                "--reason", reason, "--contact", contact, "--approval-line", line]
+
+        def fn():
+            t0 = time.time()
+            try:
+                with self.locks["neis"]:        # 나이스 크롬 프로필을 쓰는 동안 위젯의 나이스 데우기와 겹치지 않게
+                    p = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                       env=ENV, cwd=str(BOKMU.parent), creationflags=NO_WINDOW, timeout=900)
+                lines = [ln for ln in ((p.stdout or "") + "\n" + (p.stderr or "")).splitlines() if ln.strip()]
+                ok = p.returncode == 0 and any("상신 완료" in ln for ln in lines)
+                log("bokmu %s %s %s~%s" % (kind, d, start, end), ["READY" if ok else "FAIL " + " / ".join(lines[-3:])[:200]], t0)
+            except Exception as e:
+                ok, lines = False, [str(e)]
+            finally:
+                self.busy = None
+            if ok:
+                self.root.after(0, self.info, "상신 완료 — %s %s %s~%s\n사유: %s\n\n나이스 개인근무상황관리에서 한 번 확인하세요." % (kind, d, start, end, reason))
+            else:
+                self.root.after(0, self.info, "앗, 상신이 안 됐어요.\n\n" + "\n".join(lines[-4:])[:500] + "\n\n(크롬 창이 남아 있으면 거기서 직접 마무리할 수 있어요)")
         threading.Thread(target=fn, daemon=True).start()
 
     # ── 작은 창 ──
