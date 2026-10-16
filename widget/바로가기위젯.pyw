@@ -319,8 +319,7 @@ class Widget:
         e_reason = row(4, "사유", v_reason, 30)
         row(5, "연락처", v_contact, 16)
         row(6, "결재선", v_line, 24)
-        hint = tk.Label(g, text="종료 기본값 = 설정의 퇴근 시각 %s · 5분 단위
-결재선 = 나이스 «개인결재선»에 이름 붙여 저장해 둔 그 이름 (없으면 나이스에서 먼저 만들어 두세요)" % end_default,
+        hint = tk.Label(g, text="종료 기본값 = 설정의 퇴근 시각 %s · 5분 단위\n결재선 = 나이스 «개인결재선»에 이름 붙여 저장해 둔 그 이름 (없으면 나이스에서 먼저 만들어 두세요)" % end_default,
                         bg=BG, fg="#8a7a68", font=("Malgun Gothic", 8), justify="left")
         hint.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
