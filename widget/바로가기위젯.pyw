@@ -311,8 +311,8 @@ class Widget:
         tk.Label(g, text="종류", bg=BG, fg=INK, font=f).grid(row=0, column=0, sticky="w", pady=2)
         kinds = tk.Frame(g, bg=BG)
         kinds.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        for k in BOKMU_TYPES:
-            tk.Radiobutton(kinds, text=k, variable=kind, value=k, bg=BG, font=f, activebackground=BG).pack(side="left")
+        for i, k in enumerate(BOKMU_TYPES):      # 두 줄 × 셋 — 한 줄로 늘어놓으면 창 밖으로 나간다
+            tk.Radiobutton(kinds, text=k, variable=kind, value=k, bg=BG, font=f, activebackground=BG, width=7, anchor="w").grid(row=i // 3, column=i % 3, sticky="w")
         row(1, "날짜", v_date)
         row(2, "시작", v_start, 7)
         row(3, "종료", v_end, 7)
@@ -320,7 +320,7 @@ class Widget:
         row(5, "연락처", v_contact, 16)
         row(6, "결재선", v_line, 24)
         hint = tk.Label(g, text="종료 기본값 = 설정의 퇴근 시각 %s · 5분 단위\n결재선 = 나이스 «개인결재선»에 이름 붙여 저장해 둔 그 이름 (없으면 나이스에서 먼저 만들어 두세요)" % end_default,
-                        bg=BG, fg="#8a7a68", font=("Malgun Gothic", 8), justify="left")
+                        bg=BG, fg="#8a7a68", font=("Malgun Gothic", 8), justify="left", wraplength=420)
         hint.grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         def on_kind(*_):
