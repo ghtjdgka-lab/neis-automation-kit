@@ -112,7 +112,7 @@ CHROME_ARGS = [
     # 이 줄이 없으면 업무포털이 127.0.0.1 보안프로그램에 못 붙어 «보안프로그램 로딩중»에서 멈춘다
     "--disable-features=PrivateNetworkAccessForNavigations,"
     "PrivateNetworkAccessPermissionPrompt,PermissionChip",
-    "--start-maximized", "--noerrdialogs", "--test-type",
+    "--noerrdialogs", "--test-type",      # 최대화/화면 밖은 _window_args()
 ]
 
 
@@ -164,11 +164,18 @@ def allow_wxsclient():
         log("  (기안기 열기 허용을 미리 못 넣었습니다: %s)" % e)
 
 
+def _window_args():
+    """NEIS_HIDE=1(시트 «화면: 작게») 이면 화면 밖 창. teacher_config.window_args() 와 같은 규칙."""
+    if os.environ.get("NEIS_HIDE") == "1":
+        return ["--window-position=-2400,-2400", "--window-size=1920,1080"]
+    return ["--start-maximized"]
+
+
 def launch(p):
     """에듀파인 전용 크롬을 띄우고 (ctx, page) 를 돌려준다."""
     wait_profile_free()
     allow_wxsclient()
-    kw = dict(user_data_dir=PROFILE_DIR, headless=False, args=CHROME_ARGS,
+    kw = dict(user_data_dir=PROFILE_DIR, headless=False, args=CHROME_ARGS + _window_args(),
               ignore_default_args=["--enable-automation"], viewport=None)
     try:
         ctx = p.chromium.launch_persistent_context(channel="chrome", **kw)

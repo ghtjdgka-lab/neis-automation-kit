@@ -123,3 +123,15 @@ def prepare_console_window() -> None:
             ctypes.windll.user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
+
+
+def window_args() -> list:
+    """크롬 창 띄우는 옵션. 환경변수 NEIS_HIDE=1 이면 화면 밖에 띄운다(«작게»).
+
+    시트 [품의 올리기]·[복무 올리기] 의 «화면: 작게» 가 이걸 켠다 (edufine_punui_link.py).
+    최소화가 아니라 화면 밖 창이다 — 최소화한 크롬은 그리기를 멈춰 클릭·읽기가 멈출 수 있다.
+    창 크기는 최대화와 비슷하게 1920x1080 으로 둔다(넥사크로 화면 배치가 바뀌지 않게).
+    """
+    if os.environ.get("NEIS_HIDE") == "1":
+        return ["--window-position=-2400,-2400", "--window-size=1920,1080"]
+    return ["--start-maximized"]

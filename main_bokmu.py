@@ -430,8 +430,8 @@ async def run(args):
                 "--disable-web-security",
                 "--allow-running-insecure-content",
                 "--test-type",
-                "--start-maximized",
                 "--noerrdialogs",
+                *teacher_config.window_args(),   # «화면: 작게» 면 화면 밖 창
             ],
             ignore_default_args=["--enable-automation", "--no-sandbox"],
             viewport=None,

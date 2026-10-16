@@ -192,10 +192,22 @@ def run(link: str, dry: bool = False) -> int:
               % (job, prev.get("시각"), prev.get("상태")))
         print("   다시 올려야 하면 에듀파인 품의목록을 먼저 보고, 시트에서 메뉴를 다시 눌러 새 링크로 올리세요.")
         return 1
+    # 시트 «화면: 작게» → 크롬을 화면 밖에 띄운다 (edufine_common·main_bokmu 가 NEIS_HIDE 를 읽는다)
+    if data.get("화면") == "작게":
+        os.environ["NEIS_HIDE"] = "1"
+        print("🫥 화면: 작게 — 크롬은 화면 밖에서 돕니다. 진행은 이 검은 창에 찍힙니다"
+              + (" (결재올림의 기안기 창은 잠깐 뜹니다)" if data.get("범위") == "결재올림까지" else ""))
     title = data["plan"].get("제목") if data["kind"] == "품의" else "복무 %d건" % len(data["rows"])
     mark(job, 시각=datetime.now().strftime("%m-%d %H:%M"), 상태="진행중", 제목=title)
     if data["kind"] == "복무":
         return run_bokmu(data)
+
+    if any(it.get("링크") for it in data["plan"].get("품목", [])):
+        ok = fill_links(data["plan"])
+        if not ok:
+            mark(job, 상태="❌", 결과={"이유": "링크 읽기 실패 또는 선생님이 멈춤"})
+            print("RESULT_JSON=" + json.dumps({"주문서": job, "상태": "❌", "이유": "링크"}, ensure_ascii=False))
+            return 1
 
     PLANS.mkdir(parents=True, exist_ok=True)
     plan_file = PLANS / ("품의_%s.json" % job)
@@ -251,6 +263,103 @@ def run(link: str, dry: bool = False) -> int:
     log.close()
     print("기록: %s" % log.name)
     return 0 if state == "✅" else 1
+
+
+# ── 쇼핑몰 링크 → 품명·단가 ─────────────────────────────────
+def korean_money(n: int) -> str:
+    """164650 → 금일십육만사천육백오십원 (시트 한글금액() 과 같은 규칙)"""
+    digit = ["", "일", "이", "삼", "사", "오", "육", "칠", "팔", "구"]
+    small, big = ["", "십", "백", "천"], ["", "만", "억", "조"]
+    out, g = "", 0
+    while n > 0:
+        part, t, i = n % 10000, "", 0
+        while part > 0:
+            d = part % 10
+            if d:
+                t = digit[d] + small[i] + t
+            part //= 10
+            i += 1
+        if t:
+            out = t + big[g] + out
+        n //= 10000
+        g += 1
+    return "금" + out + "원"
+
+
+def rebuild_overview(plan: dict) -> None:
+    """링크로 품명·단가가 바뀌었으면 개요·결재선을 시트와 같은 규칙으로 다시 만든다."""
+    src = plan.get("개요재료") or {}
+    items = plan["품목"]
+    total = sum(it["수량"] * it["단가"] for it in items)
+    goods = [it for it in items if it["내용"] != "배송비"] or items
+    lines = []
+    if src.get("관련"):
+        lines.append("관련: " + src["관련"])
+    lines.append("품명: " + goods[0]["내용"] + (" 외 %d개" % (len(goods) - 1) if len(goods) > 1 else ""))
+    lines.append("금액: 금%s원(%s).  끝." % ("{:,}".format(total), korean_money(total)))
+    head = src.get("머리말") or plan["개요"].split("\n")[0]
+    plan["개요"] = "\n".join([head] + ["%d. %s" % (i + 1, t) for i, t in enumerate(lines)])
+    if not plan.get("결재선직접") and plan.get("결재선표"):
+        line = ""
+        rules = [r for r in plan["결재선표"] if str(r[1]).strip()]
+        for lim, name in sorted([r for r in rules if r[0] not in ("", None)], key=lambda r: float(r[0])):
+            if total < float(lim):
+                line = name
+                break
+        else:
+            rest = [r for r in rules if r[0] in ("", None)]
+            line = rest[0][1] if rest else ""
+        plan["결재선"] = line
+
+
+def fill_links(plan: dict) -> bool:
+    """품목에 «링크» 가 있으면 shop_read.py 로 읽어 비어 있는 품명·단가를 채운다. 선생님 확인을 받는다."""
+    need = [it for it in plan["품목"] if it.get("링크") and (not it.get("내용") or not it.get("단가"))]
+    if not need:
+        return True
+    print("🔗 쇼핑몰 링크 %d개를 읽습니다 (화면 밖 크롬, 한 개에 5~8초)…" % len(need), flush=True)
+    r = subprocess.run([venv_python(), "-X", "utf8", str(HERE / "shop_read.py")] + [it["링크"] for it in need],
+                       cwd=str(HERE), capture_output=True, text=True, encoding="utf-8", errors="replace")
+    got = []
+    for line in (r.stdout or "").splitlines():
+        if line.startswith("RESULT_JSON="):
+            try:
+                got = json.loads(line.split("=", 1)[1])
+            except Exception:
+                pass
+    by = {g.get("링크"): g for g in got}
+    bad = []
+    for it in need:
+        g = by.get(it["링크"]) or {}
+        price = g.get("1개당가격") or g.get("할인가")      # 쿠팡은 1개당 가격을 단가로
+        if not g.get("품명") or not price or g.get("응답코드") not in (200, None) or g.get("오류"):
+            bad.append("%s — %s" % (it["링크"][:60], g.get("오류") or "응답 %s" % g.get("응답코드")))
+            continue
+        if not it.get("내용"):
+            it["내용"] = re.sub(r"\s+", " ", g["품명"]).strip()[:50]
+        if not it.get("단가"):
+            it["단가"] = int(price)
+            it["_링크가격"] = True
+    if bad:
+        print("❌ 링크를 못 읽었습니다 — 시트에 물품·단가를 직접 적고 다시 올려 주세요:")
+        for b in bad:
+            print("   · " + b)
+        return False
+    for it in plan["품목"]:
+        it.pop("링크", None)
+    rebuild_overview(plan)
+    print("━" * 60)
+    print("링크에서 읽은 값으로 바꾼 품의:")
+    for it in plan["품목"]:
+        print("  · %s  %d개 × %s원%s" % (it["내용"], it["수량"], "{:,}".format(it["단가"]),
+                                       "  ← 링크" if it.pop("_링크가격", False) else ""))
+    print(plan["개요"])
+    print("결재선  %s" % (plan.get("결재선") or "-"))
+    print("━" * 60)
+    if os.environ.get("PUNUI_NO_PAUSE") == "1":
+        return True
+    ans = input("이대로 올릴까요? [엔터 = 올리기 / n = 멈춤] ").strip().lower()
+    return ans not in ("n", "ㅜ", "아니", "no")
 
 
 # ── 복무 ────────────────────────────────────────────────────
