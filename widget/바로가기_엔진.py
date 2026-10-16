@@ -172,6 +172,31 @@ def pick_page(ctx, site):
     return ctx.pages[0] if ctx.pages else None
 
 
+def connect_sync(p, port):
+    """막 띄운 크롬(특히 새 프로필 첫 실행)은 포트가 열린 뒤에도 붙기가 한 번 튕긴다 (10/16 엔드투엔드 실측: 15초 타임아웃) → 3번."""
+    last = None
+    for i in range(3):
+        try:
+            return p.chromium.connect_over_cdp("http://127.0.0.1:%d" % port, timeout=15_000)
+        except Exception as e:
+            last = e
+            step("붙기 실패, 다시 (%d/3)" % (i + 1))
+            time.sleep(2)
+    raise last
+
+
+async def connect_async(p, port):
+    last = None
+    for i in range(3):
+        try:
+            return await p.chromium.connect_over_cdp("http://127.0.0.1:%d" % port, timeout=15_000)
+        except Exception as e:
+            last = e
+            step("붙기 실패, 다시 (%d/3)" % (i + 1))
+            await asyncio.sleep(2)
+    raise last
+
+
 def other_clients(port):
     """이 포트에 CDP 로 붙어 있는 «다른» 프로세스 (내 자식인 playwright 드라이버는 뺀다)."""
     try:
@@ -327,7 +352,7 @@ async def neis_cmd(cmd, launch_ok):
         return
     fresh = ensure_chrome(site, minimized=(cmd == "warm"))
     async with async_playwright() as p:
-        browser = await p.chromium.connect_over_cdp("http://127.0.0.1:%d" % SITES[site]["port"], timeout=15_000)
+        browser = await connect_async(p, SITES[site]["port"])
         ctx = browser.contexts[0]
         page = pick_page(ctx, site) or await ctx.new_page()
         if cmd == "open":
@@ -426,7 +451,7 @@ def edufine_cmd(cmd, launch_ok):
         return
     fresh = ensure_chrome(site, minimized=(cmd == "warm"))
     with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp("http://127.0.0.1:%d" % SITES[site]["port"], timeout=15_000)
+        browser = connect_sync(p, SITES[site]["port"])
         ctx = browser.contexts[0]
         page = pick_page(ctx, site) or ctx.new_page()
         page.set_default_timeout(30_000)
