@@ -104,6 +104,77 @@ def round5(hm):
     return "%02d:%02d" % (h, m)
 
 
+WEEK = "월화수목금토일"
+
+
+def date_label(iso):
+    """2026-10-16 → «2026-10-16 (금) 📅» (단추 글자)"""
+    from datetime import date
+    try:
+        return "%s (%s)  📅" % (iso, WEEK[date.fromisoformat(iso).weekday()])
+    except ValueError:
+        return iso + "  📅"
+
+
+def date_picker(parent, var, bg, on_pick=None):
+    """작은 달력 — 날짜를 누르면 var 에 YYYY-MM-DD 가 들어간다 (10/16 사용자: 날짜는 치지 말고 달력에서 클릭)"""
+    import calendar
+    from datetime import date
+    f, fb = ("Malgun Gothic", 8), ("Malgun Gothic", 9, "bold")
+    try:
+        d0 = date.fromisoformat(var.get())
+    except ValueError:
+        d0 = date.today()
+    shown = [d0.year, d0.month]
+    box = tk.Frame(parent, bg=bg)
+    head = tk.Frame(box, bg=bg)
+    head.pack(fill="x")
+    title = tk.Label(head, bg=bg, font=fb)
+    days = tk.Frame(box, bg=bg)
+    days.pack()
+
+    def move(step):
+        y, m = shown[0], shown[1] + step
+        if m < 1:
+            y, m = y - 1, 12
+        elif m > 12:
+            y, m = y + 1, 1
+        shown[:] = [y, m]
+        draw()
+
+    def pick(iso):
+        var.set(iso)
+        draw()
+        if on_pick:
+            on_pick(iso)
+
+    def draw():
+        for w in days.winfo_children():
+            w.destroy()
+        y, m = shown
+        title.config(text="%d년 %d월" % (y, m))
+        for i, d in enumerate("일월화수목금토"):           # 일요일부터 — 우리 달력 모양
+            tk.Label(days, text=d, bg=bg, font=f, width=3,
+                     fg="#c0392b" if i == 0 else "#1b6fb5" if i == 6 else "#8a7a68").grid(row=0, column=i)
+        sel, today = var.get(), date.today().isoformat()
+        for r, week in enumerate(calendar.Calendar(firstweekday=6).monthdayscalendar(y, m), start=1):
+            for c, d in enumerate(week):
+                if not d:
+                    continue
+                iso = "%04d-%02d-%02d" % (y, m, d)
+                on = iso == sel
+                tk.Button(days, text=str(d), width=3, relief="flat", bd=0, font=f, cursor="hand2",
+                          bg="#c2417a" if on else "#fde7f0" if iso == today else "white",
+                          fg="white" if on else "#c0392b" if c == 0 else "#1b6fb5" if c == 6 else "#3b2f25",
+                          activebackground="#f4c2d7",
+                          command=lambda iso=iso: pick(iso)).grid(row=r, column=c, padx=1, pady=1)
+    tk.Button(head, text="◀", relief="flat", bd=0, bg=bg, font=f, cursor="hand2", command=lambda: move(-1)).pack(side="left", padx=4)
+    tk.Button(head, text="▶", relief="flat", bd=0, bg=bg, font=f, cursor="hand2", command=lambda: move(1)).pack(side="right", padx=4)
+    title.pack(side="left", expand=True)
+    draw()
+    return box
+
+
 class Widget:
     def __init__(self):
         st = load_state()
@@ -313,7 +384,26 @@ class Widget:
         kinds.grid(row=0, column=1, sticky="w", padx=(8, 0))
         for i, k in enumerate(BOKMU_TYPES):      # 두 줄 × 셋 — 한 줄로 늘어놓으면 창 밖으로 나간다
             tk.Radiobutton(kinds, text=k, variable=kind, value=k, bg=BG, font=f, activebackground=BG, width=7, anchor="w").grid(row=i // 3, column=i % 3, sticky="w")
-        row(1, "날짜", v_date)
+        # 날짜 — 치지 않고 단추를 눌러 달력에서 고른다
+        tk.Label(g, text="날짜", bg=BG, fg=INK, font=f).grid(row=1, column=0, sticky="nw", pady=2)
+        df = tk.Frame(g, bg=BG)
+        df.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=2)
+        db = tk.Button(df, text=date_label(v_date.get()), font=f, relief="groove", bg="white", cursor="hand2", anchor="w")
+        db.pack(anchor="w")
+        cal = {"box": None}
+
+        def picked(iso):
+            db.config(text=date_label(iso))
+            toggle_cal()
+
+        def toggle_cal():
+            if cal["box"]:
+                cal["box"].destroy(); cal["box"] = None
+            else:
+                cal["box"] = date_picker(df, v_date, BG, picked)
+                cal["box"].pack(anchor="w", pady=(4, 2))
+            self.place_tip(tip)                    # 크기가 바뀌었으니 다시 가운데로
+        db.config(command=toggle_cal)
         row(2, "시작", v_start, 7)
         row(3, "종료", v_end, 7)
         e_reason = row(4, "사유", v_reason, 30)
@@ -390,10 +480,20 @@ class Widget:
         fr = tk.Frame(tip, bg=BG, highlightbackground=LINE, highlightthickness=2)
         fr.pack()
         tk.Label(fr, text=text, font=("Malgun Gothic", 9), bg=BG, fg=INK, wraplength=420, justify="left", padx=12, pady=10).pack(anchor="w")
-        tip.update_idletasks()
-        x = max(0, self.root.winfo_x() + self.root.winfo_width() - tip.winfo_reqwidth())
-        tip.geometry("+%d+%d" % (x, self.root.winfo_y() + self.root.winfo_height() + 6))
+        self.place_tip(tip)
+        tip.after(30, lambda: tip.winfo_exists() and self.place_tip(tip))   # 단추·입력칸이 다 붙은 뒤 한 번 더
         return tip, fr
+
+    def place_tip(self, tip):
+        """작은 창은 위젯 가운데 바로 아래 (한쪽으로 치우치지 않게). 밑에 자리가 없으면 위젯 위로."""
+        tip.update_idletasks()
+        w, h = tip.winfo_reqwidth(), tip.winfo_reqheight()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        x = min(max(0, self.root.winfo_x() + self.root.winfo_width() // 2 - w // 2), sw - w)
+        y = self.root.winfo_y() + self.root.winfo_height() + 6
+        if y + h > sh - 56:
+            y = max(0, self.root.winfo_y() - h - 6)
+        tip.geometry("+%d+%d" % (x, y))
 
     def confirm(self, text, ok_label, on_ok):
         tip, fr = self.popup(text)
