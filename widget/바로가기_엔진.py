@@ -383,13 +383,8 @@ async def neis_cmd(cmd, launch_ok):
                     print("READY", flush=True)
                     return
                 step("세션이 끊겨 있었음")
-            try:
-                if await page.get_by_role("textbox", name="인증서 암호 입력필드").count():
-                    step("로그인 창이 떠 있어 건드리지 않음")
-                    print("READY", flush=True)
-                    return
-            except Exception:
-                pass
+            # 여기까지 왔으면 창은 최소화돼 있고 아무도 안 붙어 있다 → 남아 있는 인증서 창은 지난 실패의 찌꺼기다.
+            # 그걸 «누가 로그인 중»으로 보고 건너뛰면 영영 로그인이 안 된다 (10/16 엔드투엔드 실측) → 그냥 다시 로그인한다
         await neis_login(ctx, page)
         print("READY", flush=True)
 
