@@ -245,7 +245,27 @@ class Widget:
         self.root.mainloop()
 
 
+def breakaway():
+    """클로드(코드 화면)가 띄운 명령은 «잡(job)»으로 묶여서, 클로드 쪽 프로세스가 끝나거나 죽으면 같이 죽는다
+    (10/16 엔드투엔드 실측: 클로드 프로세스를 끊자 위젯도 사라짐). 잡 안에서 시작됐으면 잡 밖으로 나를 다시 띄우고 끝낸다."""
+    if "--unjobbed" in sys.argv:
+        return False
+    try:
+        k = ctypes.windll.kernel32
+        injob = ctypes.c_int(0)
+        if not k.IsProcessInJob(k.GetCurrentProcess(), None, ctypes.byref(injob)) or not injob.value:
+            return False
+        flags = 0x01000000 | 0x00000008 | 0x00000200          # CREATE_BREAKAWAY_FROM_JOB | DETACHED | NEW_PROCESS_GROUP
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--unjobbed"], cwd=str(HERE),
+                         creationflags=flags, close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False          # 잡이 breakaway 를 안 허용하면 그냥 이대로 돈다
+
+
 if __name__ == "__main__":
+    if breakaway():
+        sys.exit(0)
     mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "neis-edufine-widget")
     if ctypes.windll.kernel32.GetLastError() == 183:      # 이미 떠 있다
         sys.exit(0)
