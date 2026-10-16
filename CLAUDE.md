@@ -86,7 +86,8 @@
 | `cert_name` | 공동인증서 이름 (비밀번호는 keyring) |
 | `contact` | 복무 신청 연락처 |
 | `approval_line` | 나이스 개인결재선 프리셋 이름 |
-| `holiday_sheet_id` / `holiday_sheet_range` | 휴업일 시트 (선택) |
+| `school_office` / `school_code` / `school_name` | 우리 학교 — 휴업일을 나이스 학사일정(open.neis.go.kr, 키 없이 하루씩)에서 찾는다 (`school_calendar.py`) |
+| `holiday_sheet_id` / `holiday_sheet_range` | 예전 방식 휴업일 시트 (있으면 학사일정과 합친다) |
 | `last_period` | 하루 최대 교시 수 |
 | `calendars` | 분류별 구글 캘린더 ID |
 

@@ -17,6 +17,7 @@ import keyring
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+import school_calendar
 import teacher_config
 
 # 구글 OAuth 클라이언트 정보는 저장소에 커밋하지 않는다.
@@ -185,6 +186,7 @@ def relaunch_in_new_window() -> int:
     print(f"   인증서 이름       {name[:1] + '*' * max(len(name) - 1, 0) if name else '(없음)'}")
     print(f"   인증서 비밀번호   {'저장됨' if saved else '❌ 없음'}")
     print(f"   복무 연락처·결재선 {'있음' if cfg.get('contact') else '없음'} / {'있음' if cfg.get('approval_line') else '없음'}")
+    print(f"   우리 학교         {cfg.get('school_name') or '-'}")
     print(f"   출결 캘린더       {len(cfg.get('calendars') or {})}개")
     return 0 if (name and saved and proc.returncode == 0) else 1
 
@@ -242,12 +244,35 @@ def main():
     approval_line = ask("나이스에 저장해 둔 개인결재선 프리셋 이름",
                         old.get("approval_line", ""), required=False)
 
-    print("\n── 5. 휴업일 시트 (선택, 안 쓰면 그냥 Enter) ──")
-    print("   재량휴업일에 출결을 입력하지 않으려면 날짜가 적힌 구글 시트 ID를 넣으세요.")
-    holiday_sheet = ask("휴업일 시트 ID", old.get("holiday_sheet_id", ""), required=False)
-    holiday_range = old.get("holiday_sheet_range", teacher_config.DEFAULTS["holiday_sheet_range"])
-    if holiday_sheet:
-        holiday_range = ask("휴업일이 적힌 범위 (예: 출결!K2:K50)", holiday_range)
+    print("\n── 5. 우리 학교 (휴업일 자동 확인) ──")
+    print("   학교 이름을 치면 나이스 학사일정에서 재량휴업일·방학을 알아서 찾습니다.")
+    print("   출결을 안 쓰시면 그냥 Enter.")
+    school = {k: old.get(k, "") for k in ("school_office", "school_code", "school_name")}
+    while True:
+        q = ask("학교 이름 (예: 원묵중)", school["school_name"], required=False)
+        if not q or q == school["school_name"]:
+            break
+        try:
+            found_s = school_calendar.find_school(q, school_calendar.office_from_neis_url(neis_url)) \
+                or school_calendar.find_school(q)
+        except Exception as e:
+            print(f"  ⚠️  학교를 찾지 못했습니다 (인터넷 확인): {e}  — 그냥 Enter 로 넘어가도 됩니다.")
+            continue
+        if not found_s:
+            print("  ⚠️  그 이름의 학교가 없습니다. «중학교»를 빼고 짧게 쳐 보세요.")
+            continue
+        for i, s in enumerate(found_s, 1):
+            print(f"   {i}) {s['name']} · {s['office_name']} · {s['addr']}")
+        if len(found_s) == 1:
+            pick = 1
+        else:
+            pick = ask("몇 번입니까? (안 보이면 그냥 Enter 하고 더 길게 다시)", "", required=False)
+            if not pick.isdigit() or not 1 <= int(pick) <= len(found_s):
+                continue
+        s = found_s[int(pick) - 1]
+        school = {"school_office": s["office"], "school_code": s["code"], "school_name": s["name"]}
+        print(f"  ✅  {s['name']} — 휴업일은 나이스 학사일정에서 자동으로 확인합니다")
+        break
 
     print("\n── 6. 학생 출결 자동화 (구글 캘린더) ──")
     print("   복무(조퇴·외출·출장)만 쓰실 거면 이 단계는 건너뛰셔도 됩니다.")
@@ -275,8 +300,7 @@ def main():
         "cert_name": cert_name,
         "contact": contact,
         "approval_line": approval_line,
-        "holiday_sheet_id": holiday_sheet,
-        "holiday_sheet_range": holiday_range,
+        **school,
         "last_period": old.get("last_period", 7),
         "calendars": calendars,
     })

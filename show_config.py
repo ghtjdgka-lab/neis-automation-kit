@@ -43,7 +43,7 @@ def main() -> int:
     contact = cfg.get("contact", "")
     print(f"    연락처        : {mask_phone(contact) if contact else '(안 넣음)'}")
     print(f"    개인결재선    : {'설정됨 ✅' if cfg.get('approval_line') else '(안 넣음)'}")
-    print(f"    휴업일 시트   : {'설정됨 ✅' if cfg.get('holiday_sheet_id') else '(안 넣음)'}")
+    print(f"    우리 학교     : {cfg.get('school_name') or '(안 넣음 — 휴업일 확인 안 함)'}")
     print(f"    출결 캘린더   : {len(cfg.get('calendars', {}))}개")
 
     pw = keyring.get_password(teacher_config.KEYRING_SERVICE, cfg.get("cert_name", ""))

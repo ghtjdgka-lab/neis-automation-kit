@@ -28,6 +28,8 @@ TOKEN_FILE = teacher_config.TOKEN_FILE
 NEIS_URL      = None   # 시도교육청별 나이스 주소
 SHEET_ID      = ""     # 휴업일 시트 (비어 있으면 휴업일 확인을 건너뛴다)
 HOLIDAY_RANGE = ""
+SCHOOL_OFFICE = ""     # 우리 학교 교육청 코드 (나이스 학사일정으로 휴업일 확인)
+SCHOOL_CODE   = ""
 LAST_PERIOD   = 7      # 하루 최대 교시 수
 
 # ============================================================
@@ -48,11 +50,13 @@ def load_teacher_settings() -> None:
     """%LOCALAPPDATA%의 teacher_config.json + keyring에서 교사별 설정을 읽어
     모듈 전역(GRADE/CLASS/CERT_NAME/CERT_PASSWORD/ATTENDANCE_CALENDARS)에 채운다."""
     global GRADE, CLASS, CERT_NAME, CERT_PASSWORD, ATTENDANCE_CALENDARS
-    global NEIS_URL, SHEET_ID, HOLIDAY_RANGE, LAST_PERIOD
+    global NEIS_URL, SHEET_ID, HOLIDAY_RANGE, LAST_PERIOD, SCHOOL_OFFICE, SCHOOL_CODE
     cfg = teacher_config.load_config()
     NEIS_URL      = cfg["neis_url"]
     SHEET_ID      = cfg.get("holiday_sheet_id", "")
     HOLIDAY_RANGE = cfg.get("holiday_sheet_range", "")
+    SCHOOL_OFFICE = cfg.get("school_office", "")
+    SCHOOL_CODE   = cfg.get("school_code", "")
     LAST_PERIOD   = int(cfg.get("last_period", 7))
     GRADE = cfg["grade"]
     CLASS = cfg["class"]
@@ -85,9 +89,21 @@ ATTENDANCE_MAP = {
 }
 
 # ============================================================
-# 구글 시트 휴업일 읽기
+# 휴업일 읽기 — 나이스 학사일정(school_calendar) + 예전 구글 시트
 # ============================================================
-def load_holidays() -> set:
+def load_holidays(dates=()) -> set:
+    """휴업일 = 나이스 학사일정(우리 학교, 키 없이) ∪ 예전 방식 구글 시트(설정해 둔 분만)."""
+    holidays = set()
+    if SCHOOL_CODE and dates:
+        try:
+            import school_calendar
+            holidays |= school_calendar.holidays_among(SCHOOL_OFFICE, SCHOOL_CODE, dates)
+        except Exception as e:
+            print(f"  ⚠️  학사일정 조회 실패 — 휴업일 확인 없이 진행합니다: {e}")
+    return holidays | _sheet_holidays()
+
+
+def _sheet_holidays() -> set:
     if not SHEET_ID:
         return set()   # 휴업일 시트를 설정하지 않았으면 이 기능만 건너뛴다
     try:
@@ -1150,7 +1166,7 @@ async def main():
             await auto_login(page)
             await wait_for_attendance_page(page)
 
-            holidays = load_holidays()
+            holidays = load_holidays(task_map.keys())
             if holidays:
                 print(f"  📅  휴업일 {len(holidays)}개 로드: {sorted(d.strftime('%m/%d') for d in holidays)}")
 

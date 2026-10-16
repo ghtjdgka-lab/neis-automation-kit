@@ -220,7 +220,7 @@ async def run(start, end):
     M.load_teacher_settings()
     recs = M.load_from_calendar(start, end)
     task_map = M.build_task_map(recs)
-    holidays = M.load_holidays()
+    holidays = M.load_holidays([d for d in task_map if start <= d <= end])
 
     dates = [d for d in task_map
              if start <= d <= end and d.weekday() < 5 and d not in holidays]

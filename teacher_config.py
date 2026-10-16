@@ -35,6 +35,8 @@ DEFAULTS = {
     # 휴업일(재량휴업일 등)을 읽어올 구글 시트. 비워두면 이 기능만 건너뛴다.
     "holiday_sheet_id": "",
     "holiday_sheet_range": "출결!K2:K50",
+    # 우리 학교 (설정 마법사 5번) — 나이스 학사일정에서 휴업일을 키 없이 찾는다 (school_calendar.py)
+    "school_office": "", "school_code": "", "school_name": "",
     # 복무 신청 시 쓰는 값
     "contact": "",                 # 예: "010-1234-5678" — 근무상황신청 연락처
     "approval_line": "",           # 나이스에 미리 저장해 둔 개인결재선 프리셋 이름
