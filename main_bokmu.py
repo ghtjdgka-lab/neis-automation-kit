@@ -11,6 +11,7 @@
     python main_bokmu.py --type 병조퇴 --date 2026-09-21 --start 15:50 --end 16:20 --reason "감기(OO내과 진료)"
 """
 import argparse
+import os
 import asyncio
 import re
 import sys
@@ -366,6 +367,10 @@ async def submit(page: Page, dialog, approval_line: str, dump_popup: bool = Fals
             return False
 
         btn, aria, text, _html = popups[0]
+        # ② 뒤에 뜨는 «상신을 완료하였습니다» 는 성공 알림이다 — 닫고 끝낸다 (2026-10-16 실측)
+        if submitted and "상신을 완료하였습니다" in norm_text(text) and await btn.count() == 1:
+            await btn.click(timeout=3000)
+            break
         step = match_popup_step(aria, text)
         if step is None:
             await _handover("예상과 다른 확인창입니다.")
@@ -396,6 +401,17 @@ async def submit(page: Page, dialog, approval_line: str, dump_popup: bool = Fals
     return True
 
 
+def _cdp_alive(port: int) -> bool:
+    """그 포트에 원격 조작 가능한 크롬이 떠 있는지 (프록시를 타지 않게 직접 연결)."""
+    import urllib.request
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(f"http://127.0.0.1:{port}/json/version", timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 async def run(args):
     neis.load_teacher_settings()
     PROFILE_DIR = str(teacher_config.CONFIG_DIR / "chrome_profile")
@@ -418,7 +434,15 @@ async def run(args):
         sys.exit(1)
 
     async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
+        # 같은 프로필 크롬이 원격 조작 포트(9222)를 열고 이미 떠 있으면(바로가기 위젯의 «미리 열어두기» 등)
+        # 새로 띄우지 말고 그 크롬에 탭 하나로 붙는다. 새로 띄우면 «기존 브라우저 세션에서 여는 중»을 찍고
+        # 바로 죽어 상신이 안 된다 (2026-10-16 실측). 끝나면 내가 연 탭만 닫고 크롬은 남긴다.
+        browser = None
+        port = int(os.environ.get("NEIS_CDP_PORT", "9222"))
+        if _cdp_alive(port):
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            print(f"🔗  이미 떠 있는 나이스 크롬(포트 {port})에 붙습니다")
+        context = browser.contexts[0] if browser else await p.chromium.launch_persistent_context(
             user_data_dir=PROFILE_DIR,
             channel="chrome",
             headless=False,
@@ -437,7 +461,19 @@ async def run(args):
             viewport=None,
         )
         await context.grant_permissions(["notifications"], origin=neis._origin_of(neis.NEIS_URL))
-        page = context.pages[0] if context.pages else await context.new_page()
+        if browser:
+            page = await context.new_page()
+            if not os.environ.get("NEIS_HIDE"):          # 최소화돼 있던 창을 꺼내 보이게
+                try:
+                    s = await context.new_cdp_session(page)
+                    wid = (await s.send("Browser.getWindowForTarget"))["windowId"]
+                    await s.send("Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": "normal"}})
+                    await s.send("Browser.setWindowBounds", {"windowId": wid, "bounds": {"windowState": "maximized"}})
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+        else:
+            page = context.pages[0] if context.pages else await context.new_page()
         await page.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
 
         # 사람에게 넘겼거나 오류로 끝나면 1. «상신이 됐다» 고 확신할 때만 0 이다.
@@ -505,7 +541,10 @@ async def run(args):
             except EOFError:
                 pass
         finally:
-            await context.close()
+            if browser:
+                await page.close()          # 남의 크롬 — 내 탭만 닫는다
+            else:
+                await context.close()
 
         return exit_code
 
