@@ -1,4 +1,4 @@
-﻿# 바로가기 위젯 — 클로드 없이 설치 (설치_바로가기위젯.cmd 가 키트를 받아 풀고 이 파일을 부른다)
+﻿# 바로가기 위젯 — 클로드 없이 설치 (바로가기위젯_설치.cmd 가 키트를 받아 풀고 이 파일을 부른다)
 # 1) 키트 setup.ps1 (파이썬·패키지·크롬 제어 도구)  2) 설정 창(지역·인증서)을 띄운다 — 저장하면 위젯이 뜬다
 $ErrorActionPreference = "Continue"
 $kit = Split-Path $PSScriptRoot -Parent

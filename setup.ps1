@@ -79,7 +79,7 @@ if (-not $py) {
     Write-Host "    https://www.python.org/downloads/windows/ 에서 «Windows installer (64-bit)» 를 받아 설치하세요."
     Write-Host "    (python.org 첫 화면의 큰 노란 버튼 «install manager» 가 아닙니다)"
     Write-Host "    설치 화면 맨 아래 [Add python.exe to PATH] 를 꼭 체크하세요!" -ForegroundColor Yellow
-    Write-Host "    설치 후 클로드 앱을 완전히 껐다 켜고 이 스크립트를 다시 실행하세요."
+    Write-Host "    설치 후 이 설치를 다시 실행하세요. (클로드 앱으로 하고 있었다면 앱을 완전히 껐다 켠 뒤)"
     exit 1
 }
 Write-Host "  OK ($(& $py --version))" -ForegroundColor Green
@@ -88,7 +88,7 @@ Write-Host "  OK ($(& $py --version))" -ForegroundColor Green
 Write-Host "[2/4] 가상환경(.venv) 만드는 중..."
 function Stop-Failed($what) {
     Write-Host ""
-    Write-Host "  X $what 에 실패했습니다. 위 빨간 글씨를 그대로 복사해 클로드에게 보여 주세요." -ForegroundColor Red
+    Write-Host "  X $what 에 실패했습니다. 위 빨간 글씨를 사진으로 찍어 두세요. (클로드를 쓰시면 클로드에게 그대로 보여 주세요)" -ForegroundColor Red
     Write-Host "    (학교망이 막고 있으면 개인 인터넷·테더링에서 설치만 다시 해 보세요)"
     exit 1
 }
@@ -97,7 +97,7 @@ $venvPy = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $venvPy)) { Stop-Failed "가상환경 만들기" }
 if (-not (Test-PythonOk $venvPy)) {
     Write-Host "  X 예전에 만든 .venv 폴더가 너무 낮은 파이썬으로 만들어져 있습니다." -ForegroundColor Red
-    Write-Host "    .venv 폴더를 지운 뒤 이 스크립트를 다시 실행하세요. (클로드에게 «.venv 지우고 다시 설치해줘» 라고 하면 됩니다)"
+    Write-Host "    .venv 폴더를 지운 뒤 이 스크립트를 다시 실행하세요. (클로드를 쓰시면 «.venv 지우고 다시 설치해줘» 라고 하면 됩니다)"
     exit 1
 }
 Write-Host "  OK" -ForegroundColor Green

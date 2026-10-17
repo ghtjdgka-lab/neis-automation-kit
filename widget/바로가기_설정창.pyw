@@ -45,6 +45,7 @@ def main():
     root.title("나이스·에듀파인 바로가기 — 설정")
     root.configure(bg="white")
     root.resizable(False, False)
+    root.option_add("*TCombobox*Listbox.font", FONT)      # 펼친 목록 글씨도 크게
     pad = {"padx": 18, "pady": 5}
 
     tk.Label(root, text="처음 한 번만 넣으면 됩니다", font=("맑은 고딕", 14, "bold"), fg=INK, bg="white").grid(
@@ -60,7 +61,7 @@ def main():
 
     r = 2
     label(r, "① 지역 (교육청)", "나이스에 접속하는 교육청이에요")
-    region = ttk.Combobox(root, values=list(REGION_CODES), state="readonly", width=24, font=FONT)
+    region = ttk.Combobox(root, values=list(REGION_CODES), state="readonly", width=24, font=FONT, height=len(REGION_CODES))
     region.set(current_region(old))
     region.grid(row=r, column=1, sticky="w", **pad)
 
