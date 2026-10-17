@@ -10,6 +10,7 @@
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -19,7 +20,7 @@ sys.path.insert(0, str(KIT))
 
 import keyring  # noqa: E402
 import teacher_config  # noqa: E402
-from setup_wizard import gpki_names, to_neis_url  # noqa: E402
+from setup_wizard import REGION_CODES, gpki_names, to_neis_url  # noqa: E402
 
 
 def ask(label, default=""):
@@ -27,17 +28,47 @@ def ask(label, default=""):
     return input("%s%s: " % (label, suffix)).strip() or default
 
 
+def load_old():
+    if teacher_config.CONFIG_FILE.exists():
+        return json.loads(teacher_config.CONFIG_FILE.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_settings(neis_url, cert_name, pw, work_start, work_end, contact=""):
+    """검은 창(main)과 설정 창(바로가기_설정창.pyw)이 같이 쓴다. 암호는 자격 증명 관리자에만."""
+    if pw:
+        keyring.set_password(teacher_config.KEYRING_SERVICE, cert_name, pw)
+    cfg = {**load_old(), "neis_url": neis_url, "cert_name": cert_name, "work_start": work_start, "work_end": work_end}
+    # 복무 스크립트(main_bokmu.py)는 출결용 항목이 «있기만» 하면 된다 — 설정 마법사도 담임이 아니면 비워 둔다 (10/16 실측: 없으면 ConfigMissingError)
+    for k, v in (("grade", ""), ("class", ""), ("calendars", {})):
+        cfg.setdefault(k, v)
+    if contact:
+        cfg["contact"] = contact
+    region = ""
+    for name, code in __import__("setup_wizard").REGION_CODES.items():
+        if "//%s.neis" % code in neis_url:
+            region = name
+    if region:
+        cfg["region"] = region          # 에듀파인 주소(klef.<지역>.go.kr)는 이걸로 정한다
+    teacher_config.save_config(cfg)
+    return cfg
+
+
 def main():
     print("=" * 56)
     print("  바로가기 위젯 — 인증서 설정")
     print("=" * 56)
-    old = {}
-    if teacher_config.CONFIG_FILE.exists():
-        old = json.loads(teacher_config.CONFIG_FILE.read_text(encoding="utf-8"))
+    old = load_old()
+    if old:
         print("\n(기존 설정을 찾았습니다. 그대로 두려면 그냥 Enter)")
 
-    print("\n── 1. 지역 ──  (서울이면 그냥 Enter. 경기·부산처럼 지역 이름만 치면 됩니다)")
-    neis_url = to_neis_url(ask("지역 또는 나이스 주소", old.get("neis_url", teacher_config.DEFAULTS["neis_url"])))
+    print("\n── 1. 지역 ──  (서울이면 그냥 Enter. 아니면 아래 이름 중 하나를 치세요)")
+    print("   " + " · ".join(REGION_CODES))
+    while True:
+        neis_url = to_neis_url(ask("지역", old.get("neis_url", teacher_config.DEFAULTS["neis_url"])))
+        if re.match(r"https://[a-z]+\.neis\.go\.kr/", neis_url):
+            break
+        print("   ⚠️ 모르는 지역입니다. 위 목록의 이름(예: 경기)으로 다시 쳐 주세요.")
 
     print("\n── 2. 교육행정 인증서 이름 ──")
     names = gpki_names()
@@ -55,9 +86,6 @@ def main():
     if not pw:
         print("❌ 암호가 비어 있습니다.")
         sys.exit(1)
-    keyring.set_password(teacher_config.KEYRING_SERVICE, cert_name, pw)
-
-    import re
 
     def ask_time(label, default):
         while True:
@@ -72,19 +100,7 @@ def main():
     print("\n── 6. 연락처 ──  (복무 상신 때 적히는 휴대폰 번호. 안 쓰면 그냥 Enter)")
     contact = ask("연락처 (예: 010-1234-5678)", old.get("contact", ""))
 
-    cfg = {**old, "neis_url": neis_url, "cert_name": cert_name, "work_start": work_start, "work_end": work_end}
-    # 복무 스크립트(main_bokmu.py)는 출결용 항목이 «있기만» 하면 된다 — 설정 마법사도 담임이 아니면 비워 둔다 (10/16 실측: 없으면 ConfigMissingError)
-    for k, v in (("grade", ""), ("class", ""), ("calendars", {})):
-        cfg.setdefault(k, v)
-    if contact:
-        cfg["contact"] = contact
-    region = ""
-    for name, code in __import__("setup_wizard").REGION_CODES.items():
-        if "//%s.neis" % code in neis_url:
-            region = name
-    if region:
-        cfg["region"] = region          # 에듀파인 주소(klef.<지역>.go.kr)는 이걸로 정한다
-    teacher_config.save_config(cfg)
+    save_settings(neis_url, cert_name, pw, work_start, work_end, contact)
 
     print("\n✅ 저장했습니다.")
     print("   나이스 주소   " + neis_url)

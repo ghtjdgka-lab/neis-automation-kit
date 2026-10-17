@@ -1,6 +1,8 @@
 ﻿# 나이스 자동화 — 한 번에 설치하기
 # 사용법: PowerShell에서  .\setup.ps1
 # (클로드 앱에서 «setup.ps1 실행해줘» 라고 하면 대신 돌려 줍니다)
+# -Widget : 바로가기 위젯 설치(widget\install.ps1)가 부를 때 — 맨 끝 «다음 순서» 안내를 안 찍는다
+param([switch]$Widget)
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -124,6 +126,7 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "  설치 완료!" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
+if ($Widget) { exit 0 }
 if (-not (Test-Path "oauth_client.json")) {
     Write-Host "다음 순서로 진행하세요:" -ForegroundColor Yellow
     Write-Host "  1) docs/02_구글-연동.md 를 보고 oauth_client.json 만들기"

@@ -540,8 +540,9 @@ class Widget:
 
     # ── 설정·닫기 ──
     def open_setup(self):
-        subprocess.Popen([str(PY), "-X", "utf8", str(SETUP)], cwd=str(HERE), env=ENV, creationflags=0x00000010)  # CREATE_NEW_CONSOLE
-        self.say("검은 창에서 설정을 마쳐 주세요", INK, 8000)
+        # 마우스로 고르는 설정 창 (클로드 없이 쓰는 선생님도 같은 창). 검은 창판(바로가기_설정.py)은 클로드 지시서용으로 남겨 둔다
+        subprocess.Popen([str(PY.with_name("pythonw.exe")), str(HERE / "바로가기_설정창.pyw")], cwd=str(HERE), env=ENV)
+        self.say("설정 창에서 마쳐 주세요", INK, 8000)
 
     def close_chrome(self):
         def fn():
