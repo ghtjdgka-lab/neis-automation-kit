@@ -11,8 +11,16 @@ Write-Host "  (5~15분 걸릴 수 있어요. 이 창을 닫지 마세요)" -Fore
 Write-Host "==================================================" -ForegroundColor Cyan
 
 powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $kit "setup.ps1") -Widget
+$setupCode = $LASTEXITCODE
 $pyw = Join-Path $kit ".venv\Scripts\pythonw.exe"
-if (-not (Test-Path $pyw)) {
+$py  = Join-Path $kit ".venv\Scripts\python.exe"
+$ok = ($setupCode -eq 0) -and (Test-Path $py)
+if ($ok) {
+    # 설정 창이 쓰는 것들이 실제로 들어왔나 (pythonw 는 실패해도 아무 말이 없다)
+    & $py -c "import keyring, psutil, tkinter, playwright, setup_wizard" 2>$null
+    $ok = ($LASTEXITCODE -eq 0)
+}
+if (-not $ok) {
     Write-Host ""
     Write-Host "  X 설치가 끝나지 않았습니다. 위의 빨간 글씨를 사진으로 찍어 보내 주세요." -ForegroundColor Red
     Write-Host "    (학교망이 막는 경우가 있어요 — 휴대폰 테더링으로 이 파일을 한 번 더 실행해 보세요)"

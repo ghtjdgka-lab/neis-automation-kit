@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
@@ -35,6 +36,24 @@ def current_region(old):
         if "//%s.neis" % code in (old.get("neis_url") or ""):
             return name
     return "서울"
+
+
+def restart_widget():
+    """이미 떠 있는 위젯(다시 설치·업데이트한 경우)은 끄고 새로 띄운다 — 안 그러면 새 위젯이 «이미 떠 있다»로 바로 꺼져 옛 코드가 계속 돈다."""
+    try:
+        import psutil
+        me = os.getpid()
+        for p in psutil.process_iter(["pid", "name", "cmdline"]):
+            name = (p.info.get("name") or "").lower()
+            args = p.info.get("cmdline") or []
+            # 파이썬이 이 위젯 파일을 «실행 중»인 것만 — 명령줄에 글자만 들어 있는 다른 창은 건드리지 않는다
+            if p.info["pid"] != me and name.startswith("python") and any(a.endswith("바로가기위젯.pyw") for a in args[1:3]):
+                p.kill()
+        time.sleep(1.0)
+    except Exception:
+        pass
+    pyw = Path(sys.executable).with_name("pythonw.exe")
+    subprocess.Popen([str(pyw), str(HERE / "바로가기위젯.pyw")], cwd=str(HERE), close_fds=True)
 
 
 def main():
@@ -119,8 +138,7 @@ def main():
             return msg.config(text="저장하지 못했어요: %s" % str(e)[:120], fg=RED)
         msg.config(text="✅ 저장했어요. 바탕화면에 «나이스 에듀파인 바로가기»가 생겼고, 위젯을 띄웁니다.\n"
                         "처음 한 번은 로그인하느라 20~30초 걸리고, 그다음부터는 누르면 1~2초예요.", fg=GREEN)
-        pyw = Path(sys.executable).with_name("pythonw.exe")
-        subprocess.Popen([str(pyw), str(HERE / "바로가기위젯.pyw")], cwd=str(HERE), close_fds=True)
+        restart_widget()
         btn.config(text="닫기", command=root.destroy)
 
     btn = tk.Button(root, text="저장하고 위젯 켜기", font=("맑은 고딕", 12, "bold"), fg="white", bg="#2563eb",

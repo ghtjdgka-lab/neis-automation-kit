@@ -29,8 +29,13 @@ def ask(label, default=""):
 
 
 def load_old():
-    if teacher_config.CONFIG_FILE.exists():
-        return json.loads(teacher_config.CONFIG_FILE.read_text(encoding="utf-8"))
+    """기존 설정. 파일이 깨져 있으면(저장 중 꺼짐 등) 빈 설정으로 시작한다 — 저장하면 새로 써진다."""
+    try:
+        if teacher_config.CONFIG_FILE.exists():
+            data = json.loads(teacher_config.CONFIG_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        pass
     return {}
 
 
@@ -42,8 +47,7 @@ def save_settings(neis_url, cert_name, pw, work_start, work_end, contact=""):
     # 복무 스크립트(main_bokmu.py)는 출결용 항목이 «있기만» 하면 된다 — 설정 마법사도 담임이 아니면 비워 둔다 (10/16 실측: 없으면 ConfigMissingError)
     for k, v in (("grade", ""), ("class", ""), ("calendars", {})):
         cfg.setdefault(k, v)
-    if contact:
-        cfg["contact"] = contact
+    cfg["contact"] = contact            # 비우고 저장하면 지워진다
     region = ""
     for name, code in __import__("setup_wizard").REGION_CODES.items():
         if "//%s.neis" % code in neis_url:

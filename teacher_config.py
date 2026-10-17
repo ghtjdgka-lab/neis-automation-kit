@@ -65,7 +65,9 @@ def load_config() -> dict:
 
 def save_config(data: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = CONFIG_FILE.with_suffix(".json.tmp")       # 저장 중에 꺼져도 원래 파일이 반쯤 써진 채 남지 않게
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, CONFIG_FILE)
 
 
 def secret_input(prompt: str) -> str:
