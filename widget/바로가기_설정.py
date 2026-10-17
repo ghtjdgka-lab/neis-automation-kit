@@ -124,11 +124,33 @@ def main():
         pass
 
 
+def known_folder(guid):
+    """윈도우가 실제로 쓰는 폴더 위치 (SHGetKnownFolderPath). 못 구하면 None."""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD), ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+        u = uuid.UUID(guid)
+        g = GUID(u.time_low, u.time_mid, u.time_hi_version, (ctypes.c_ubyte * 8)(*u.bytes[8:]))
+        out = ctypes.c_wchar_p()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(out)) != 0:
+            return None
+        path = out.value
+        ctypes.windll.ole32.CoTaskMemFree(out)
+        return Path(path)
+    except Exception:
+        return None
+
+
 def make_shortcuts():
     pyw = Path(sys.executable).with_name("pythonw.exe")
     target = HERE / "바로가기위젯.pyw"
-    desktop = Path(os.path.join(os.environ["USERPROFILE"], "Desktop"))
-    startup = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    # 학교 PC는 바탕화면이 OneDrive(«OneDrive - ○○학교\바탕 화면»)로 옮겨져 있는 일이 많다 — %USERPROFILE%\Desktop 을 쓰면 안 보이는 곳에 만든다
+    desktop = known_folder("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}") or Path(os.environ["USERPROFILE"]) / "Desktop"
+    startup = known_folder("{B97D20BB-F46A-4C97-BA10-5E3608430854}") or         Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
     ps = []
     for folder in (desktop, startup):
         if not folder.exists():
