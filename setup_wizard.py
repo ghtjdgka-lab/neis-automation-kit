@@ -276,17 +276,29 @@ def main():
 
     print("\n── 6. 학생 출결 자동화 (구글 캘린더) ──")
     print("   복무(조퇴·외출·출장)만 쓰실 거면 이 단계는 건너뛰셔도 됩니다.")
-    print("   출결까지 쓰시려면 본인 구글 클라우드 프로젝트에서 발급한")
-    print("   oauth_client.json 이 이 폴더에 있어야 합니다.")
-    use_calendar = ask("출결 자동화도 쓰시겠습니까? (y/n)",
-                       "y" if old.get("calendars") else "n", required=False)
-
     calendars = old.get("calendars", {})
-    if use_calendar.strip().lower().startswith("y"):
-        creds = run_oauth()
-        print("\n📅  출결 분류 캘린더 확인/생성 중...")
-        calendars = ensure_calendars(creds)
+    # ★ 구글 열쇠(oauth_client.json)가 없으면 묻지도 않고 건너뛴다 — 담임이라 y 를 눌렀다가
+    #   «파일이 없습니다»로 마법사가 통째로 끝나 인증서·연락처까지 저장 안 되던 일이 있었다 (2026-10-21 연수)
+    if not _OAUTH_CLIENT_FILE.exists():
+        print("   구글 열쇠(oauth_client.json)가 아직 없어서 이 단계는 건너뜁니다.")
+        print("   담임이셔도 괜찮습니다 — 복무 자동화는 지금 바로 쓰실 수 있고,")
+        print("   출결은 열쇠를 넣은 뒤 이 설정을 한 번 더 돌리면 이어서 연결됩니다.")
+        use_calendar = "n"
     else:
+        print("   출결까지 쓰시려면 y (구글 로그인 창이 뜹니다).")
+        use_calendar = ask("출결 자동화도 쓰시겠습니까? (y/n)",
+                           "y" if old.get("calendars") else "n", required=False)
+
+    if use_calendar.strip().lower().startswith("y"):
+        try:
+            creds = run_oauth()
+            print("\n📅  출결 분류 캘린더 확인/생성 중...")
+            calendars = ensure_calendars(creds)
+        except (SystemExit, Exception) as e:
+            # 구글 쪽이 실패해도 앞에서 넣은 인증서·복무 값은 저장한다
+            print(f"  ⚠️  구글 캘린더 연결은 못 했습니다 ({e or '열쇠 파일 문제'}).")
+            print("     나머지 설정은 저장합니다. 출결은 나중에 이 설정을 다시 돌리면 됩니다.")
+    elif _OAUTH_CLIENT_FILE.exists():
         print("   건너뜁니다. 나중에 출결도 쓰시려면 이 설정을 다시 돌리면 됩니다.")
 
     if cert_password:
@@ -314,7 +326,8 @@ def main():
         pass
     print(f"   설정 파일: {teacher_config.CONFIG_FILE}")
     print("   비밀번호는 이 파일이 아니라 Windows 자격 증명 관리자에 따로 저장됩니다.")
-    print("\n   이제 구글 캘린더에 출결 이벤트를 넣고  python main.py  를 실행하면 됩니다.")
+    if calendars:
+        print("\n   이제 구글 캘린더에 출결 이벤트를 넣고  python main.py  를 실행하면 됩니다.")
 
 
 if __name__ == "__main__":
