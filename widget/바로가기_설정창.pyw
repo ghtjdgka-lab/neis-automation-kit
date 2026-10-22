@@ -47,13 +47,13 @@ def restart_widget():
             name = (p.info.get("name") or "").lower()
             args = p.info.get("cmdline") or []
             # 파이썬이 이 위젯 파일을 «실행 중»인 것만 — 명령줄에 글자만 들어 있는 다른 창은 건드리지 않는다
-            if p.info["pid"] != me and name.startswith("python") and any(a.endswith("바로가기위젯.pyw") for a in args[1:3]):
+            if p.info["pid"] != me and name.startswith("python") and any(a.endswith(("바로가기위젯.pyw", "바로가기위젯_상벌점.pyw")) for a in args[1:3]):
                 p.kill()
         time.sleep(1.0)
     except Exception:
         pass
     pyw = Path(sys.executable).with_name("pythonw.exe")
-    subprocess.Popen([str(pyw), str(HERE / "바로가기위젯.pyw")], cwd=str(HERE), close_fds=True)
+    subprocess.Popen([str(pyw), str(S.widget_file())], cwd=str(HERE), close_fds=True)
 
 
 def main():

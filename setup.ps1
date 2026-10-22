@@ -46,10 +46,17 @@ if (-not $py -and (Get-Command winget -ErrorAction SilentlyContinue)) {
     $ErrorActionPreference = "Continue"
     # --source winget 필수 — 없으면 winget 이 «msstore» 목록까지 뒤지다가 그쪽이 실패하면(0x8a15003b)
     #   «--source 로 하나를 고르라»며 13초 만에 멈춘다 (2026-10-01 샌드박스 실측)
-    winget install -e --id Python.Python.3.13 --source winget --scope user --silent --accept-package-agreements --accept-source-agreements
+    # 두 번까지 — 학교 PC 백신이 막 받은 설치 파일을 검사하느라 잡고 있으면
+    #   «0x80070020 : The process cannot access the file because it is being used by another process» 로 끝난다
+    #   (2026-10-23 김수나 선생님 PC 실측: 28MB 다 받은 뒤 이 오류). 잠깐 기다렸다 다시 하면 검사가 끝나 있다
+    foreach ($try in 1..2) {
+        winget install -e --id Python.Python.3.13 --source winget --scope user --silent --accept-package-agreements --accept-source-agreements
+        $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
+        $py = Find-Python
+        if ($py) { break }
+        if ($try -eq 1) { Write-Host "  ! 백신이 설치 파일을 검사 중일 수 있어요. 30초 기다렸다 한 번 더 합니다..." -ForegroundColor Yellow; Start-Sleep 30 }
+    }
     $ErrorActionPreference = "Stop"
-    $env:Path = [Environment]::GetEnvironmentVariable("Path", "User") + ";" + [Environment]::GetEnvironmentVariable("Path", "Machine")
-    $py = Find-Python
 }
 # winget 이 없거나 고장인 PC — python.org 공식 설치 파일을 직접 받아 깐다
 #   새로 만든 윈도우 계정은 winget 목록이 비어 «필요한 데이터가 없습니다» 로 두 번 다 실패했다 (2026-10-14 실측)
@@ -57,8 +64,24 @@ if (-not $py) {
     Write-Host "  winget 으로 못 깔아서 python.org 공식 설치 파일로 깝니다 (약 30MB · 1~3분)..." -ForegroundColor Yellow
     $ErrorActionPreference = "Continue"
     $inst = Join-Path $env:TEMP "python-3.13.16-amd64.exe"
+    $url = "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe"
     try {
-        Invoke-WebRequest "https://www.python.org/ftp/python/3.13.16/python-3.13.16-amd64.exe" -OutFile $inst -UseBasicParsing
+        # 이 창(새 powershell)은 TLS 1.2 가 꺼져 있을 수 있다 — 꺼져 있으면
+        #   «Received an unexpected EOF or 0 bytes from the transport stream» 으로 끊긴다 (2026-10-23 김수나 선생님 PC)
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $ProgressPreference = "SilentlyContinue"
+        try { Invoke-WebRequest $url -OutFile $inst -UseBasicParsing }
+        catch {
+            # 그래도 안 되면 윈도우에 들어 있는 curl.exe (윈도우 자체 통신 모듈을 따로 쓴다)
+            Write-Host "  ! 다른 방법(curl)으로 다시 받습니다..." -ForegroundColor Yellow
+            Remove-Item $inst -ErrorAction SilentlyContinue
+            & curl.exe -L --retry 3 -s -o $inst $url
+        }
+        if (-not (Test-Path $inst) -or (Get-Item $inst).Length -lt 20MB) { throw "내려받은 파일이 없거나 덜 받아졌습니다" }
+        # 백신이 막 받은 파일을 검사하는 동안은 열 수 없다 — 놓아줄 때까지 최대 90초 기다린다
+        foreach ($i in 1..30) {
+            try { $fs = [IO.File]::Open($inst, 'Open', 'Read', 'None'); $fs.Close(); break } catch { Start-Sleep 3 }
+        }
         $sig = Get-AuthenticodeSignature $inst
         if ($sig.Status -eq "Valid" -and $sig.SignerCertificate.Subject -match "Python Software Foundation") {
             Start-Process $inst -ArgumentList "/quiet", "InstallAllUsers=0", "PrependPath=1", "Include_test=0", "Include_launcher=0" -Wait

@@ -145,9 +145,16 @@ def known_folder(guid):
         return None
 
 
+def widget_file():
+    """학교 전용 상벌점판을 깐 PC(바로가기위젯_상벌점_설치.cmd 가 표시 파일을 둔다)면 상벌점판, 아니면 기본 위젯."""
+    flag = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "neis-automation" / "ealimi" / "enabled"
+    alt = HERE / "바로가기위젯_상벌점.pyw"
+    return alt if flag.exists() and alt.exists() else HERE / "바로가기위젯.pyw"
+
+
 def make_shortcuts():
     pyw = Path(sys.executable).with_name("pythonw.exe")
-    target = HERE / "바로가기위젯.pyw"
+    target = widget_file()
     # 학교 PC는 바탕화면이 OneDrive(«OneDrive - ○○학교\바탕 화면»)로 옮겨져 있는 일이 많다 — %USERPROFILE%\Desktop 을 쓰면 안 보이는 곳에 만든다
     desktop = known_folder("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}") or Path(os.environ["USERPROFILE"]) / "Desktop"
     startup = known_folder("{B97D20BB-F46A-4C97-BA10-5E3608430854}") or         Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
