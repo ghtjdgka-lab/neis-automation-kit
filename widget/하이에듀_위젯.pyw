@@ -9,7 +9,7 @@
   크롬은 상벌점 전용(포트 9326)이라 나이스·에듀파인 위젯 크롬과 섞이지 않는다. 일은 하이에듀_엔진.py 가 한다.
   캐릭터 = widget 폴더의 «상벌점_그림.png»(없으면 «상벌점» 글자). 오른쪽 클릭 «캐릭터 그림 바꾸기…» 로 아무 그림이나 고르면
   바탕을 지우고(모눈종이 도트 그림은 칸마다 한 점으로) 바로 바꿔 끼운다.
-  캐릭터를 누르면 [우리반]과 같고, 끌면 옮겨진다. 오른쪽 클릭: 상벌점 설정 · 상벌점 크롬 닫기 · 위젯 끄기.
+  캐릭터를 누르면 [우리반]과 같고, 끌면 옮겨진다. 오른쪽 클릭: 상벌점 설정 · 항상 위에 띄우기 · 캐릭터 그림 · 상벌점 크롬 닫기 · 위젯 끄기.
   처음 켤 때 설정이 비어 있으면 설정 창(하이에듀 아이디·비밀번호, 인증서·인증서 암호, 학년·반)이 뜬다. 전부 자격 증명 관리자에만 저장.
 """
 import ctypes
@@ -137,12 +137,22 @@ def load_state():
         return {}
 
 
+def save_state(**kw):
+    st = load_state()
+    st.update(kw)
+    BASE.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(json.dumps(st), encoding="utf-8")
+
+
 class Widget:
     def __init__(self):
         st = load_state()
         self.root = tk.Tk()
         self.root.overrideredirect(True)
-        # «항상 위» 가 아니다 — PPT·크롬 같은 창을 띄우면 그 아래로 가려지고, 바탕화면이 보일 때만 보인다
+        # 기본은 «항상 위» 가 아니다 — PPT·크롬 같은 창을 띄우면 그 아래로 가려지고, 바탕화면이 보일 때만 보인다.
+        # 오른쪽 클릭 «항상 위에 띄우기» 를 켜면 늘 위에 뜬다 (hiedu_widget_state.json 에 기억)
+        self.topmost = st.get("topmost", False)
+        self.root.attributes("-topmost", self.topmost)
         self.root.configure(bg=KEY)
         self.root.attributes("-transparentcolor", KEY)     # 캐릭터만 보이고 바탕은 비친다
         self.root.geometry("+%d+%d" % (st.get("x", self.root.winfo_screenwidth() - 160), st.get("y", 60)))
@@ -185,6 +195,8 @@ class Widget:
 
         self.m = tk.Menu(self.root, tearoff=0, font=("Malgun Gothic", 9))
         self.m.add_command(label="상벌점 설정 (아이디·인증서·학년반)", command=self.open_setup)
+        self.top_var = tk.BooleanVar(value=self.topmost)
+        self.m.add_checkbutton(label="항상 위에 띄우기", variable=self.top_var, command=self.toggle_topmost)
         self.m.add_command(label="캐릭터 그림 바꾸기…", command=self.pick_art)
         self.m.add_command(label="캐릭터 그림 지우기 (글자로)", command=lambda: self.set_art(None))
         self.m.add_command(label="상벌점 크롬 닫기", command=lambda: threading.Thread(target=self.run, args=("close",), daemon=True).start())
@@ -250,8 +262,13 @@ class Widget:
         if abs(e.x_root - self.sx) + abs(e.y_root - self.sy) < 5:
             self.toggle_table()
             return
-        BASE.mkdir(parents=True, exist_ok=True)
-        STATE.write_text(json.dumps({"x": self.pic.winfo_rootx(), "y": self.pic.winfo_rooty()}), encoding="utf-8")   # 캐릭터 자리 (표가 위·왼쪽으로 펴져 있어도)
+        save_state(x=self.pic.winfo_rootx(), y=self.pic.winfo_rooty())   # 캐릭터 자리 (표가 위·왼쪽으로 펴져 있어도)
+
+    def toggle_topmost(self):
+        self.topmost = bool(self.top_var.get())
+        self.root.attributes("-topmost", self.topmost)
+        save_state(topmost=self.topmost)
+        self.say("늘 위에 떠요" if self.topmost else "다른 창 아래로 가려져요")
 
     # ── 단추 막대 보이기·숨기기 ──
     def place_pop(self):
