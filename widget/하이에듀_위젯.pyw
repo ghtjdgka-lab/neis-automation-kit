@@ -142,7 +142,7 @@ class Widget:
         st = load_state()
         self.root = tk.Tk()
         self.root.overrideredirect(True)
-        self.root.attributes("-topmost", True)
+        # «항상 위» 가 아니다 — PPT·크롬 같은 창을 띄우면 그 아래로 가려지고, 바탕화면이 보일 때만 보인다
         self.root.configure(bg=KEY)
         self.root.attributes("-transparentcolor", KEY)     # 캐릭터만 보이고 바탕은 비친다
         self.root.geometry("+%d+%d" % (st.get("x", self.root.winfo_screenwidth() - 160), st.get("y", 60)))
@@ -261,12 +261,21 @@ class Widget:
         x = px + pw + 2 if px + pw + 2 + w <= self.root.winfo_screenwidth() else px - w - 2
         self.pop.geometry("+%d+%d" % (x, py + max(0, (ph - h) // 2)))
 
+    def mine_at(self, mx, my):
+        """마우스 밑에 실제로 보이는 창이 이 위젯인가 — 다른 창에 가려진 캐릭터 자리를 지나가도 단추가 뜨지 않게."""
+        from ctypes import wintypes
+        u = ctypes.windll.user32
+        u.WindowFromPoint.argtypes, u.WindowFromPoint.restype = [wintypes.POINT], ctypes.c_void_p
+        u.GetAncestor.argtypes, u.GetAncestor.restype = [ctypes.c_void_p, ctypes.c_uint], ctypes.c_void_p
+        top = u.GetAncestor(u.WindowFromPoint(wintypes.POINT(mx, my)), 2)
+        return top in (u.GetAncestor(self.root.winfo_id(), 2), u.GetAncestor(self.pop.winfo_id(), 2))
+
     def hover(self):
         mx, my = self.root.winfo_pointerxy()
 
         def inside(w):
             return w.winfo_viewable() and w.winfo_rootx() <= mx < w.winfo_rootx() + w.winfo_width()                 and w.winfo_rooty() <= my < w.winfo_rooty() + w.winfo_height()
-        want = inside(self.pic) or inside(self.pop)
+        want = (inside(self.pic) or inside(self.pop)) and self.mine_at(mx, my)
         self.away = 0 if want else self.away + 1
         if want and not self.pop.winfo_viewable():
             self.place_pop()
