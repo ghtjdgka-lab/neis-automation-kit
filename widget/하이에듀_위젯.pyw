@@ -7,7 +7,8 @@
   [우리반]  우리 반 상벌점 현황을 하이에듀에서 읽어 와 위젯 아래로 표를 펼친다 (안 보이는 크롬, 약 9초).
             다시 누르면 접고, 10분 안에 또 누르면 다시 안 읽고 바로 편다. [사이트에서 보기] 는 크롬으로 우리 반만 띄운다.
   크롬은 상벌점 전용(포트 9326)이라 나이스·에듀파인 위젯 크롬과 섞이지 않는다. 일은 하이에듀_엔진.py 가 한다.
-  캐릭터 = widget 폴더의 «상벌점_그림.png»(jpg·gif 도 됨, 없으면 «상벌점» 글자). 바탕은 투명.
+  캐릭터 = widget 폴더의 «상벌점_그림.png»(없으면 «상벌점» 글자). 오른쪽 클릭 «캐릭터 그림 바꾸기…» 로 아무 그림이나 고르면
+  바탕을 지우고(모눈종이 도트 그림은 칸마다 한 점으로) 바로 바꿔 끼운다.
   캐릭터를 누르면 [우리반]과 같고, 끌면 옮겨진다. 오른쪽 클릭: 상벌점 설정 · 상벌점 크롬 닫기 · 위젯 끄기.
   처음 켤 때 설정이 비어 있으면 설정 창(하이에듀 아이디·비밀번호, 인증서·인증서 암호, 학년·반)이 뜬다. 전부 자격 증명 관리자에만 저장.
 """
@@ -37,6 +38,98 @@ KEY = "#ff00fe"      # 투명으로 뚫을 색 — 그림에 안 쓰이는 색
 BTNS = [("상벌점", "open", "#b07a00"), ("우리반", "data", "#2f7d4f")]
 
 
+def _grid_lines(means):
+    """한 줄로 늘어선 밝기에서 모눈 선(주변보다 어두운 골)을 찾아 (첫 선, 간격) — 고르게 반복될 때만."""
+    avg = sum(means) / len(means)
+    pos = [i for i in range(1, len(means) - 1) if means[i] < avg - 25 and means[i] <= means[i - 1] and means[i] <= means[i + 1]]
+    pos = [x for i, x in enumerate(pos) if i == 0 or x - pos[i - 1] > 2]          # 두 픽셀짜리 선은 하나로
+    if len(pos) < 8:
+        return None
+    gaps = sorted(b - a for a, b in zip(pos, pos[1:]))
+    step = gaps[len(gaps) // 2]
+    if step < 6 or sum(abs(g - step) <= 2 for g in gaps) < 0.7 * len(gaps):
+        return None
+    step = (pos[-1] - pos[0]) / round((pos[-1] - pos[0]) / step)                    # 소수 간격까지 (예: 23.6)
+    return pos[0], step
+
+
+def make_sprite(src):
+    """아무 그림 → 바탕이 투명한 캐릭터 그림. ① 이미 바탕이 투명하면 그대로 ② 모눈종이 위 도트 그림이면 칸마다 한 점
+    ③ 그 밖에는 가장자리와 이어진 바탕색만 지운다 (캐릭터 안쪽 흰색은 남는다). 끝으로 캐릭터만 남게 자른다."""
+    from collections import Counter, deque
+    from PIL import Image
+    im = Image.open(src).convert("RGBA")
+    W, H = im.size
+    corners = [im.getpixel(c)[3] for c in ((0, 0), (W - 1, 0), (0, H - 1), (W - 1, H - 1))]
+    if max(corners) < 128:
+        return im.crop(im.getbbox())
+    rgb = im.convert("RGB")
+    if max(W, H) > 1600:
+        rgb.thumbnail((1600, 1600))
+        W, H = rgb.size
+    px = rgb.load()
+    band = max(4, H // 10)
+    ys = range(0, band, 2)
+    gx = _grid_lines([sum(sum(px[x, y]) for y in ys) / len(ys) for x in range(W)])     # 위쪽 띠(보통 바탕)의 세로 선
+    xs = range(0, max(4, W // 10), 2)
+    gy = _grid_lines([sum(sum(px[x, y]) for x in xs) / len(xs) for y in range(H)])     # 왼쪽 띠의 가로 선
+    if gx and gy:       # 모눈 한 칸 = 도트 한 점
+        (x0, sx), (y0, sy) = gx, gy
+        x0, y0 = x0 % sx, y0 % sy
+        cols, rows = int((W - x0) // sx), int((H - y0) // sy)
+        d = max(1, int(min(sx, sy) / 5))
+        small = Image.new("RGB", (cols, rows))
+        for r in range(rows):
+            for c in range(cols):
+                cx, cy = int(x0 + (c + .5) * sx), int(y0 + (r + .5) * sy)
+                pts = [px[min(W - 1, cx + a), min(H - 1, cy + b)] for a in (-d, 0, d) for b in (-d, 0, d)]
+                small.putpixel((c, r), Counter(pts).most_common(1)[0][0])
+        rgb = small
+    elif max(W, H) > 300:
+        rgb = rgb.resize((max(1, W * 300 // max(W, H)), max(1, H * 300 // max(W, H))), Image.BOX)
+    W, H = rgb.size
+    px = rgb.load()
+    edge = [px[x, y] for x in range(W) for y in (0, H - 1)] + [px[x, y] for y in range(H) for x in (0, W - 1)]
+    bgc = Counter(edge).most_common(1)[0][0]
+    pale = sum(bgc) > 600       # 흰 바탕이면 연회색(모눈 선·그림자)도 바탕으로 — 바깥과 이어진 것만 지우니 캐릭터 안 흰색은 남는다
+    near = lambda c: sum(abs(a - b) for a, b in zip(c, bgc)) < 60 or (pale and min(c) > 185 and max(c) - min(c) < 20)
+    out = rgb.convert("RGBA")
+    seen = [[False] * W for _ in range(H)]
+    q = deque((x, y) for x in range(W) for y in (0, H - 1)) + deque((x, y) for y in range(H) for x in (0, W - 1))
+    while q:
+        x, y = q.popleft()
+        if not (0 <= x < W and 0 <= y < H) or seen[y][x] or not near(px[x, y]):
+            continue
+        seen[y][x] = True
+        out.putpixel((x, y), (0, 0, 0, 0))
+        q.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    # 캐릭터와 떨어진 작은 점(워터마크 글씨·모눈 얼룩)은 지운다 — 가장 큰 덩어리의 3% 보다 작은 덩어리
+    alpha = out.load()
+    comp, sizes = {}, []
+    for y in range(H):
+        for x in range(W):
+            if alpha[x, y][3] and (x, y) not in comp:
+                q, members = deque([(x, y)]), []
+                comp[(x, y)] = len(sizes)
+                while q:
+                    cx, cy = q.popleft()
+                    members.append((cx, cy))
+                    for nx in (cx - 1, cx, cx + 1):
+                        for ny in (cy - 1, cy, cy + 1):
+                            if 0 <= nx < W and 0 <= ny < H and alpha[nx, ny][3] and (nx, ny) not in comp:
+                                comp[(nx, ny)] = len(sizes)
+                                q.append((nx, ny))
+                sizes.append(members)
+    if not sizes:
+        raise ValueError("그림에서 캐릭터를 못 찾았어요")
+    big = max(len(m) for m in sizes)
+    for members in sizes:
+        if len(members) < 0.03 * big:
+            for xy in members:
+                out.putpixel(xy, (0, 0, 0, 0))
+    return out.crop(out.getbbox())
+
+
 def load_state():
     try:
         return json.loads(STATE.read_text(encoding="utf-8"))
@@ -59,25 +152,8 @@ class Widget:
         self.data_at = 0
         self.away = 0
 
-        art = next(iter(sorted(HERE.glob("상벌점_그림.*"))), None)   # 선생님이 준 그림
-        self.art = None
-        if art:
-            try:
-                from PIL import Image, ImageTk
-                im = Image.open(art).convert("RGBA")
-                w = max(1, round(im.width * ART_H / im.height))
-                if im.height <= 128:    # 픽셀 그림 — 정수 배로 각지게 키운 뒤 줄여야 칸이 고르다 (1.5배 같은 크기)
-                    k = -(-ART_H // im.height)
-                    im = im.resize((im.width * k, im.height * k), Image.NEAREST)
-                im = im.resize((w, ART_H), Image.LANCZOS)
-                im.putalpha(im.getchannel("A").point(lambda a: 255 if a >= 128 else 0))   # 반투명 테두리는 분홍(KEY)이 비친다 → 0/255 로
-                self.art = ImageTk.PhotoImage(im)
-            except Exception:
-                pass
-        if self.art:
-            self.pic = tk.Label(self.root, image=self.art, bg=KEY, bd=0, cursor="hand2")
-        else:
-            self.pic = tk.Label(self.root, text="상벌점", bg=BG, fg="#b07a00", font=("Malgun Gothic", 10, "bold"), padx=8, pady=6, cursor="hand2")
+        self.pic = tk.Label(self.root, bd=0, cursor="hand2")
+        self.load_art()
         self.pic.pack(anchor="w")
         self.pic.bind("<ButtonPress-1>", self.press)
         self.pic.bind("<B1-Motion>", self.drag)
@@ -109,9 +185,56 @@ class Widget:
 
         self.m = tk.Menu(self.root, tearoff=0, font=("Malgun Gothic", 9))
         self.m.add_command(label="상벌점 설정 (아이디·인증서·학년반)", command=self.open_setup)
+        self.m.add_command(label="캐릭터 그림 바꾸기…", command=self.pick_art)
+        self.m.add_command(label="캐릭터 그림 지우기 (글자로)", command=lambda: self.set_art(None))
         self.m.add_command(label="상벌점 크롬 닫기", command=lambda: threading.Thread(target=self.run, args=("close",), daemon=True).start())
         self.m.add_separator()
         self.m.add_command(label="위젯 끄기", command=self.root.destroy)
+
+    # ── 캐릭터 그림 (widget\\상벌점_그림.png) ──
+    def load_art(self):
+        self.art = None
+        art = next(iter(sorted(HERE.glob("상벌점_그림.*"))), None)
+        if art:
+            try:
+                from PIL import Image, ImageTk
+                im = Image.open(art).convert("RGBA")
+                w = max(1, round(im.width * ART_H / im.height))
+                if im.height <= 128:    # 픽셀 그림 — 정수 배로 각지게 키운 뒤 줄여야 칸이 고르다 (1.5배 같은 크기)
+                    k = -(-ART_H // im.height)
+                    im = im.resize((im.width * k, im.height * k), Image.NEAREST)
+                im = im.resize((w, ART_H), Image.LANCZOS)
+                im.putalpha(im.getchannel("A").point(lambda a: 255 if a >= 128 else 0))   # 반투명 테두리는 분홍(KEY)이 비친다 → 0/255 로
+                self.art = ImageTk.PhotoImage(im)
+            except Exception:
+                pass
+        if self.art:
+            self.pic.configure(image=self.art, text="", bg=KEY, padx=0, pady=0)
+        else:
+            self.pic.configure(image="", text="상벌점", bg=BG, fg="#b07a00", font=("Malgun Gothic", 10, "bold"), padx=8, pady=6)
+
+    def pick_art(self):
+        from tkinter import filedialog
+        f = filedialog.askopenfilename(parent=self.root, title="캐릭터 그림 고르기",
+                                       filetypes=[("그림", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"), ("모든 파일", "*.*")])
+        if f:
+            self.set_art(f)
+
+    def set_art(self, src):
+        """고른 그림을 바탕 투명한 캐릭터로 만들어 widget\\상벌점_그림.png 로 저장하고 바로 바꿔 끼운다 (None = 글자로)."""
+        x, y = self.pic.winfo_rootx(), self.pic.winfo_rooty()
+        try:
+            sprite = make_sprite(src) if src else None
+        except Exception as e:
+            self.say("앗, 그림을 못 바꿨어요: " + str(e)[:40], "#c0392b", 8000)
+            return
+        for old in HERE.glob("상벌점_그림.*"):
+            old.unlink()
+        if sprite:
+            sprite.save(HERE / "상벌점_그림.png")
+        self.load_art()
+        self.relayout(x, y)
+        self.say("캐릭터를 바꿨어요" if sprite else "글자로 바꿨어요", "#2f7d4f")
 
     # ── 끌기 (조금만 움직였으면 클릭 = 우리 반 표 펴기/접기) ──
     def press(self, e):
