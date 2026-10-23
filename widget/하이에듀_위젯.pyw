@@ -1,0 +1,348 @@
+# -*- coding: utf-8 -*-
+"""상벌점(하이에듀) 위젯 — 나이스·에듀파인 위젯과 따로 떠 있는 캐릭터 하나. 마우스를 대면 옆에 단추 둘이 뜬다.
+
+  .\\.venv\\Scripts\\pythonw.exe widget\\하이에듀_위젯.pyw      (설치: 하이에듀위젯_설치.cmd)
+
+  [상벌점]  하이에듀 첫 화면 (아이디·암호 → 인증서까지 자동 로그인)
+  [우리반]  우리 반 상벌점 현황을 하이에듀에서 읽어 와 위젯 아래로 표를 펼친다 (안 보이는 크롬, 약 9초).
+            다시 누르면 접고, 10분 안에 또 누르면 다시 안 읽고 바로 편다. [사이트에서 보기] 는 크롬으로 우리 반만 띄운다.
+  크롬은 상벌점 전용(포트 9326)이라 나이스·에듀파인 위젯 크롬과 섞이지 않는다. 일은 하이에듀_엔진.py 가 한다.
+  캐릭터 = widget 폴더의 «상벌점_그림.png»(jpg·gif 도 됨, 없으면 «상벌점» 글자). 바탕은 투명.
+  캐릭터를 누르면 [우리반]과 같고, 끌면 옮겨진다. 오른쪽 클릭: 상벌점 설정 · 상벌점 크롬 닫기 · 위젯 끄기.
+  처음 켤 때 설정이 비어 있으면 설정 창(하이에듀 아이디·비밀번호, 인증서·인증서 암호, 학년·반)이 뜬다. 전부 자격 증명 관리자에만 저장.
+"""
+import ctypes
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import tkinter as tk
+from datetime import datetime
+from tkinter import ttk
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+ENGINE = HERE / "하이에듀_엔진.py"
+PY = Path(sys.executable).with_name("python.exe")
+BASE = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "neis-automation"
+STATE = BASE / "hiedu_widget_state.json"
+NO_WINDOW = 0x08000000
+ENV = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+
+BG, INK, LINE = "#fffaf2", "#3b2f25", "#d9ccb8"
+ART_H = 54          # 캐릭터 높이
+KEY = "#ff00fe"      # 투명으로 뚫을 색 — 그림에 안 쓰이는 색
+BTNS = [("상벌점", "open", "#b07a00"), ("우리반", "data", "#2f7d4f")]
+
+
+def load_state():
+    try:
+        return json.loads(STATE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+class Widget:
+    def __init__(self):
+        st = load_state()
+        self.root = tk.Tk()
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg=KEY)
+        self.root.attributes("-transparentcolor", KEY)     # 캐릭터만 보이고 바탕은 비친다
+        self.root.geometry("+%d+%d" % (st.get("x", self.root.winfo_screenwidth() - 160), st.get("y", 60)))
+        self.busy = None
+        self.lock = threading.Lock()
+        self.table = None
+        self.data_at = 0
+        self.away = 0
+
+        art = next(iter(sorted(HERE.glob("상벌점_그림.*"))), None)   # 선생님이 준 그림
+        self.art = None
+        if art:
+            try:
+                from PIL import Image, ImageTk
+                im = Image.open(art).convert("RGBA")
+                w = max(1, round(im.width * ART_H / im.height))
+                if im.height <= 128:    # 픽셀 그림 — 정수 배로 각지게 키운 뒤 줄여야 칸이 고르다 (1.5배 같은 크기)
+                    k = -(-ART_H // im.height)
+                    im = im.resize((im.width * k, im.height * k), Image.NEAREST)
+                im = im.resize((w, ART_H), Image.LANCZOS)
+                im.putalpha(im.getchannel("A").point(lambda a: 255 if a >= 128 else 0))   # 반투명 테두리는 분홍(KEY)이 비친다 → 0/255 로
+                self.art = ImageTk.PhotoImage(im)
+            except Exception:
+                pass
+        if self.art:
+            self.pic = tk.Label(self.root, image=self.art, bg=KEY, bd=0, cursor="hand2")
+        else:
+            self.pic = tk.Label(self.root, text="상벌점", bg=BG, fg="#b07a00", font=("Malgun Gothic", 10, "bold"), padx=8, pady=6, cursor="hand2")
+        self.pic.pack(anchor="w")
+        self.pic.bind("<ButtonPress-1>", self.press)
+        self.pic.bind("<B1-Motion>", self.drag)
+        self.pic.bind("<ButtonRelease-1>", self.release)
+        self.pic.bind("<Button-3>", lambda e: self.m.tk_popup(e.x_root, e.y_root))
+
+        # 마우스를 대면 옆에 뜨는 단추 막대
+        self.pop = tk.Toplevel(self.root)
+        self.pop.overrideredirect(True)
+        self.pop.attributes("-topmost", True)
+        self.pop.withdraw()
+        fr = tk.Frame(self.pop, bg=BG, highlightbackground=LINE, highlightthickness=1)
+        fr.pack()
+        row = tk.Frame(fr, bg=BG)
+        row.pack()
+        for text, cmd, color in BTNS:
+            b = tk.Label(row, text=text, bg=BG, fg=color, font=("Malgun Gothic", 10, "bold"), padx=9, pady=6, cursor="hand2")
+            b.pack(side="left")
+            b.bind("<Button-1>", lambda e, c=cmd, t=text: self.toggle_table() if c == "data" else self.click(c, t))
+            b.bind("<Enter>", lambda e, w=b: w.configure(bg="#f3e9da"))
+            b.bind("<Leave>", lambda e, w=b: w.configure(bg=BG))
+        self.tip = tk.Toplevel(self.root)      # 안내 글씨 — 따로 떠서 화면 남는 쪽에 붙는다 (place_tip)
+        self.tip.overrideredirect(True)
+        self.tip.attributes("-topmost", True)
+        self.tip.withdraw()
+        self.status = tk.Label(self.tip, text="", bg=BG, fg="#8a7a68", font=("Malgun Gothic", 9), padx=6, pady=2,
+                               highlightbackground=LINE, highlightthickness=1)
+        self.status.pack()
+
+        self.m = tk.Menu(self.root, tearoff=0, font=("Malgun Gothic", 9))
+        self.m.add_command(label="상벌점 설정 (아이디·인증서·학년반)", command=self.open_setup)
+        self.m.add_command(label="상벌점 크롬 닫기", command=lambda: threading.Thread(target=self.run, args=("close",), daemon=True).start())
+        self.m.add_separator()
+        self.m.add_command(label="위젯 끄기", command=self.root.destroy)
+
+    # ── 끌기 (조금만 움직였으면 클릭 = 우리 반 표 펴기/접기) ──
+    def press(self, e):
+        self.sx, self.sy = e.x_root, e.y_root
+        self.wx, self.wy = self.root.winfo_x(), self.root.winfo_y()
+
+    def drag(self, e):
+        self.root.geometry("+%d+%d" % (self.wx + e.x_root - self.sx, self.wy + e.y_root - self.sy))
+        self.place_pop()
+        self.place_tip()
+
+    def release(self, e):
+        if abs(e.x_root - self.sx) + abs(e.y_root - self.sy) < 5:
+            self.toggle_table()
+            return
+        BASE.mkdir(parents=True, exist_ok=True)
+        STATE.write_text(json.dumps({"x": self.pic.winfo_rootx(), "y": self.pic.winfo_rooty()}), encoding="utf-8")   # 캐릭터 자리 (표가 위·왼쪽으로 펴져 있어도)
+
+    # ── 단추 막대 보이기·숨기기 ──
+    def place_pop(self):
+        self.pop.update_idletasks()
+        px, py, pw, ph = self.pic.winfo_rootx(), self.pic.winfo_rooty(), self.pic.winfo_width(), self.pic.winfo_height()
+        w, h = self.pop.winfo_reqwidth(), self.pop.winfo_reqheight()
+        x = px + pw + 2 if px + pw + 2 + w <= self.root.winfo_screenwidth() else px - w - 2
+        self.pop.geometry("+%d+%d" % (x, py + max(0, (ph - h) // 2)))
+
+    def hover(self):
+        mx, my = self.root.winfo_pointerxy()
+
+        def inside(w):
+            return w.winfo_viewable() and w.winfo_rootx() <= mx < w.winfo_rootx() + w.winfo_width()                 and w.winfo_rooty() <= my < w.winfo_rooty() + w.winfo_height()
+        want = inside(self.pic) or inside(self.pop)
+        self.away = 0 if want else self.away + 1
+        if want and not self.pop.winfo_viewable():
+            self.place_pop()
+            self.pop.deiconify()
+        elif self.away >= 2 and self.pop.winfo_viewable():     # 마우스를 떼면 곧 숨긴다 (맹구↔막대 사이를 건널 틈만 0.2초)
+            self.pop.withdraw()
+        self.root.after(200, self.hover)
+
+    # ── 말풍선 ──
+    def show_status(self, text, color):
+        self.status.configure(text=text, fg=color)
+        if text:
+            self.tip.deiconify()
+            self.place_tip()
+        else:
+            self.tip.withdraw()
+        if self.pop.winfo_viewable():
+            self.place_pop()
+
+    def say(self, text, color=INK, ms=4000):
+        self.show_status(text, color)
+        self.root.after(ms, lambda: self.show_status("", color) if self.status.cget("text") == text else None)
+
+    def tick(self):
+        if self.busy:
+            self.show_status(self.busy + "." * (int(time.time() * 2) % 3 + 1), "#8a7a68")
+        self.root.after(400, self.tick)
+
+    # ── 엔진 ──
+    def run(self, cmd):
+        last, self.data = "", None
+        with self.lock:
+            p = subprocess.Popen([str(PY), "-X", "utf8", str(ENGINE), cmd], stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                                 env=ENV, cwd=str(HERE), creationflags=NO_WINDOW)
+            try:
+                ctypes.windll.user32.AllowSetForegroundWindow(p.pid)   # 크롬 창을 맨 앞에 꺼낼 권한을 넘긴다
+            except Exception:
+                pass
+            for line in p.stdout:
+                line = line.strip()
+                if line.startswith("STEP ") and self.busy:
+                    self.busy = line[5:].split("  (")[0]
+                elif line.startswith("DATA "):
+                    self.data = json.loads(line[5:])
+                elif line.startswith(("READY", "FAIL", "CLOSED")):
+                    last = line
+            p.wait()
+        return last
+
+    def click(self, cmd, text):
+        if self.busy:
+            return
+        self.busy = text + (" 읽는 중" if cmd == "data" else " 여는 중")
+
+        def fn():
+            try:
+                last = self.run(cmd)
+            finally:
+                self.busy = None
+            if last.startswith("READY") and cmd == "data" and self.data:
+                self.root.after(0, self.show_table, self.data)
+                self.root.after(0, self.show_status, "", INK)     # «읽는 중…» 마지막 단계 글씨가 남지 않게
+            elif last.startswith("READY"):
+                self.root.after(0, self.say, "짠! 열렸어요", "#2f7d4f")
+            else:
+                self.root.after(0, self.say, "앗, 실패: " + (last[5:] or "알 수 없는 오류"), "#c0392b", 10000)
+        threading.Thread(target=fn, daemon=True).start()
+
+    # ── 우리 반 표 (위젯 아래로 펼친다) ──
+    def toggle_table(self):
+        if self.table and self.table.winfo_ismapped():
+            self.close_table()
+        elif self.data_at and time.time() - self.data_at < 10 * 60:   # 10분 안에 읽은 건 바로 다시 편다
+            self.open_table()
+        else:
+            self.click("data", "우리반")
+
+    def show_table(self, d):
+        self.data_at = time.time()
+        if self.table:
+            self.table.destroy()
+        t = self.table = tk.Frame(self.root, bg=BG, highlightbackground=LINE, highlightthickness=1)
+        tk.Label(t, text="%s학년 %s반 · %s ~ %s · %s 읽음" % (d["grade"], d["class"], d["from"][5:].replace("-", "/"),
+                 d["to"][5:].replace("-", "/"), datetime.now().strftime("%H:%M")),
+                 bg=BG, fg=INK, font=("Malgun Gothic", 9, "bold")).pack(padx=8, pady=(6, 4), anchor="w")
+        cols = ("번호", "이름", "상점", "벌점", "상쇄점", "이월", "누계")
+        st = ttk.Style(t)
+        st.configure("H.Treeview", font=("Malgun Gothic", 9), rowheight=20)
+        st.configure("H.Treeview.Heading", font=("Malgun Gothic", 9, "bold"))
+        box = tk.Frame(t, bg=BG)
+        box.pack(padx=8)
+        tv = ttk.Treeview(box, columns=cols, show="headings", height=min(len(d["rows"]), 15), style="H.Treeview")
+        for c, w in zip(cols, (40, 70, 44, 44, 50, 40, 46)):
+            tv.heading(c, text=c)
+            tv.column(c, width=w, anchor="w" if c == "이름" else "center")
+        tv.tag_configure("minus", foreground="#c0392b")
+        for r in d["rows"]:
+            try:
+                minus = float(r[-1]) < 0
+            except ValueError:
+                minus = False
+            tv.insert("", "end", values=r, tags=("minus",) if minus else ())
+        tv.pack(side="left")
+        if len(d["rows"]) > 15:
+            sb = ttk.Scrollbar(box, orient="vertical", command=tv.yview)
+            tv.configure(yscrollcommand=sb.set)
+            sb.pack(side="left", fill="y")
+        bar = tk.Frame(t, bg=BG)
+        bar.pack(pady=6)
+        for text, fn in (("새로고침", lambda: self.click("data", "우리반")),
+                         ("사이트에서 보기", lambda: self.click("class", "우리반")), ("접기", self.close_table)):
+            tk.Button(bar, text=text, font=("Malgun Gothic", 9), command=fn, padx=6).pack(side="left", padx=3)
+        self.open_table()
+
+    def open_table(self):
+        """아래로 펴면 화면 밑(작업 표시줄)에 걸리면 위로 편다. 좌우는 relayout 이 정한다."""
+        x, y = self.pic.winfo_rootx(), self.pic.winfo_rooty()
+        self.table.update_idletasks()
+        if y + self.pic.winfo_height() + self.table.winfo_reqheight() <= self.root.winfo_screenheight() - 48:
+            self.table.pack(fill="x", after=self.pic)
+        else:
+            self.table.pack(fill="x", before=self.pic)
+        self.relayout(x, y)
+
+    def close_table(self):
+        x, y = self.pic.winfo_rootx(), self.pic.winfo_rooty()
+        self.table.pack_forget()
+        self.relayout(x, y)
+
+    def place_tip(self):
+        """안내 글씨: 맹구 아래 → 위 → 옆 중 화면 안에 들어가고 표와 안 겹치는 첫 자리. 좌우는 화면 안쪽으로 뻗게."""
+        if not self.tip.winfo_viewable():
+            return
+        self.tip.update_idletasks()
+        px, py, pw, ph = self.pic.winfo_rootx(), self.pic.winfo_rooty(), self.pic.winfo_width(), self.pic.winfo_height()
+        w, h = self.tip.winfo_reqwidth(), self.tip.winfo_reqheight()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight() - 48
+        x = px if px + w <= sw - 8 else max(0, px + pw - w)
+        side = px + pw + 2 if px + pw + 2 + w <= sw - 8 else max(0, px - w - 2)
+        table_up = self.table is not None and self.table.winfo_ismapped() and self.table.winfo_rooty() < py
+        table_down = self.table is not None and self.table.winfo_ismapped() and not table_up
+        spots = [(x, py + ph + 2, not table_down and py + ph + 2 + h <= sh),      # 아래
+                 (x, py - h - 2, not table_up and py - h - 2 >= 0),                # 위
+                 (side, py + max(0, (ph - h) // 2), True)]                         # 옆 (표는 위·아래로만 펴진다)
+        sx, sy, _ = next(sp for sp in spots if sp[2])
+        self.tip.geometry("+%d+%d" % (sx, sy))
+
+    def relayout(self, x, y):
+        """표가 펴지거나 접힐 때마다 — 캐릭터는 (x, y) 제자리에 두고, 오른쪽이 모자라면 표를 왼쪽으로 편다."""
+        self.root.update_idletasks()
+        w = self.root.winfo_reqwidth()
+        right = x + w > self.root.winfo_screenwidth() - 8
+        self.pic.pack_configure(anchor="e" if right else "w")
+        up = self.table is not None and self.table.winfo_ismapped() and self.table.winfo_y() < self.pic.winfo_y()
+        rx = x + self.pic.winfo_width() - w if right else x
+        ry = y - self.table.winfo_reqheight() if up else y
+        self.root.geometry("+%d+%d" % (rx, ry))
+        self.root.update_idletasks()
+        self.place_tip()
+
+    def open_setup(self):
+        subprocess.Popen([str(PY.with_name("pythonw.exe")), "-X", "utf8", str(ENGINE), "setup"], cwd=str(HERE), env=ENV)
+
+    def first_run(self):
+        """설정(아이디·암호·인증서·학년반)이 하나라도 비었으면 설정 창부터 띄운다."""
+        def fn():
+            if self.run("ready").startswith("FAIL"):
+                self.root.after(0, self.open_setup)
+        threading.Thread(target=fn, daemon=True).start()
+
+    def mainloop(self):
+        self.root.after(500, self.first_run)
+        self.tick()
+        self.hover()
+        self.root.mainloop()
+
+
+def breakaway():
+    """클로드가 띄우면 «잡(job)»에 묶여 클로드와 같이 죽는다 — 잡 밖으로 다시 띄운다 (바로가기위젯.pyw 와 같은 이유)."""
+    if "--unjobbed" in sys.argv:
+        return False
+    try:
+        k = ctypes.windll.kernel32
+        injob = ctypes.c_int(0)
+        if not k.IsProcessInJob(k.GetCurrentProcess(), None, ctypes.byref(injob)) or not injob.value:
+            return False
+        subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "--unjobbed"], cwd=str(HERE),
+                         creationflags=0x01000000 | 0x00000008 | 0x00000200, close_fds=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+
+if __name__ == "__main__":
+    if breakaway():
+        sys.exit(0)
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, "hiedu-widget")
+    if ctypes.windll.kernel32.GetLastError() == 183:      # 이미 떠 있다
+        sys.exit(0)
+    Widget().mainloop()
